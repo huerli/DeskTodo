@@ -140,6 +140,31 @@ git tag v0.1.0 && git push origin v0.1.0
 > 交叉编译不可行：Tauri 必须在目标操作系统上打包。要在本机产出 Windows 安装包，
 > 需在 Windows 上运行 `scripts/build.sh`，或使用上面的 CI。
 
+### Gitee Go 流水线（仅 Linux）
+
+仓库内还有一份 Gitee Go 流水线配置：`.workflow/desk-todo-linux.yml`。
+推 `main` 或 `v*` 标签时，它会装依赖 → 编译 → **跑一遍 `--self-test` 自检** → 打成
+`.AppImage` / `.deb` → 上传制品库并发布（自动打 `v<版本号>` 标签）。
+
+```bash
+# 在 Gitee 仓库页面：服务 → Gitee Go → 流水线，即可看到并执行
+```
+
+**⚠️ 为什么没有 macOS / Windows？**
+Gitee Go 的云端编译插件只提供 Linux 基础镜像（CentOS 8 / Ubuntu 20.04），
+没有 macOS 与 Windows 环境。而 Tauri 的 `.dmg` 需要 `hdiutil`/`codesign`、
+`.msi` 需要 WiX，都必须在目标系统上原生执行，无法交叉编译。所以：
+
+| 平台 | 由谁产出 |
+| --- | --- |
+| Linux `.AppImage` / `.deb` | Gitee Go（`.workflow/desk-todo-linux.yml`） |
+| macOS `.dmg` | 本机 `scripts/make-dmg.sh`，或 GitHub Actions |
+| Windows `.exe` / `.msi` | Windows 机器上 `scripts/build.sh`，或 GitHub Actions |
+
+若确实需要在 Gitee 侧构建 macOS/Windows，只能走 Gitee Go 的「Shell 脚本执行」
+插件 + 自建主机组（`hostGroupID`），即自己提供 Mac / Windows 机器作为构建机；
+官方文档未说明自建主机组支持的系统范围，需自行验证。
+
 ---
 
 ## 三、Git 同步
@@ -319,7 +344,10 @@ desk-todo/
 │  ├─ build.sh                 构建 + 打包
 │  ├─ make-dmg.sh              生成带「应用程序」快捷方式的 DMG
 │  └─ run.sh                   启动
-└─ .github/workflows/build.yml 三平台 CI 打包
+├─ .workflow/
+│  └─ desk-todo-linux.yml      Gitee Go 流水线（Linux 包 + 自检 + 发布）
+└─ .github/workflows/
+   └─ build.yml                GitHub Actions 三平台打包
 ```
 
 ---

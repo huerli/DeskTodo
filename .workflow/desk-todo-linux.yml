@@ -1,0 +1,92 @@
+# Gitee Go 流水线：Linux 构建 + 自检 + 制品发布
+#
+# ⚠️ 适用范围（重要）
+# ------------------------------------------------------------------
+# Gitee Go 的云端编译插件只提供 **Linux** 基础镜像（CentOS 8 / Ubuntu 20.04），
+# 没有 macOS / Windows 环境。而 Tauri 必须在目标操作系统上原生打包
+# （macOS 的 .dmg 需要 hdiutil/codesign，Windows 的 .msi 需要 WiX），无法交叉编译。
+#
+# 因此本流水线只能产出：
+#   ✅ Linux  .AppImage / .deb
+#   ❌ macOS  .dmg        → 见 .github/workflows/build.yml（GitHub Actions）
+#   ❌ Windows .exe/.msi  → 同上
+#
+# 另：Gitee Go 的免费额度为个人每月 500 分钟构建时长。
+#
+# 语法依据：https://help.gitee.com/gitee-go/pipeline/basic-config
+#           https://help.gitee.com/gitee-go/plugin/ci-build （GCC 构建）
+#           https://help.gitee.com/gitee-go/plugin/deploy （上传制品 / 发布）
+
+version: '1.0'
+name: desk-todo-linux
+displayName: DeskTodo Linux 构建与发布
+
+triggers:
+  push:
+    branches:
+      precise:
+        - main
+    tags:
+      # 推 v* 标签时构建并发布版本
+      prefix:
+        - v
+
+stages:
+  # ================================================================
+  # 阶段一：编译 Linux 安装包
+  # ================================================================
+  - stage:
+      name: build_linux
+      displayName: 编译 Linux 安装包
+      steps:
+        - step: build@gcc
+          name: build_gcc
+          displayName: Rust/Tauri 构建（AppImage + deb）
+          gccVersion: 10.3
+          commands:
+            # ---------- 1) 系统依赖（Tauri 在 Linux 上的必需库） ----------
+            - apt-get update -qq
+            - apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev build-essential curl wget file pkg-config libayatana-appindicator3-dev
+            # ---------- 2) Rust 工具链 ----------
+            - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+            - sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable
+            - . "$HOME/.cargo/env"
+            # ---------- 3) 自检：无需图形界面，先拦住回归再打包 ----------
+            #   注意：自检用独立临时目录，不会碰用户数据
+            - cd src-tauri && cargo build --release
+            - ./src-tauri/target/release/desk-todo --self-test
+            # ---------- 4) 打包 ----------
+            - cargo install tauri-cli --version "^2.0" --locked
+            - cd src-tauri && cargo tauri build --bundles appimage,deb
+            # ---------- 5) 整理产物到统一目录 ----------
+            - mkdir -p ./output
+            - find ./src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} ./output/ \;
+            - find ./src-tauri/target/release/bundle -name "*.deb" -exec cp {} ./output/ \;
+            - ls -lh ./output
+          artifacts:
+            - name: BUILD_ARTIFACT
+              path:
+                - ./output
+
+  # ================================================================
+  # 阶段二：上传制品并发布（推 tag 时才有版本号意义）
+  # ================================================================
+  - stage:
+      name: publish
+      displayName: 上传制品与发布
+      steps:
+        - step: publish@general_artifacts
+          name: upload_artifacts
+          displayName: 上传制品
+          dependArtifact: BUILD_ARTIFACT
+          artifactRepository: default
+          artifactName: desk-todo-linux
+
+        - step: publish@release_artifacts
+          name: release_artifacts
+          displayName: 发布
+          dependArtifact: desk-todo-linux
+          artifactRepository: release
+          # 版本号会自增第 4 位，并对当前提交打上 v<版本号> 标签
+          version: '0.1.0.0'
+          autoIncrement: true
