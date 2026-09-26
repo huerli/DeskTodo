@@ -1,0 +1,24 @@
+# ---- Rust / 构建产物 ----
+/src-tauri/target/
+/target/
+*.rs.bk
+Cargo.lock.orig
+
+# ---- Node ----
+/node_modules/
+.pnpm-store/
+.pnpm-home/
+.npm-cache/
+pnpm-debug.log
+
+# ---- 应用运行时数据（不应进版本库）----
+todos.json
+todos.corrupted-*.json
+backups/
+
+# ---- 编辑器 / 系统 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

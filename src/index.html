@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeskTodo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="widget" class="widget">
+    <!-- ==================== 标题栏（拖动区） ==================== -->
+    <header class="titlebar" id="titlebar">
+      <button class="icon-btn collapse-btn" id="btn-collapse" title="收起 / 展开 (⌘/Ctrl+Shift+H)">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
+      <div class="title" id="title-text">待办</div>
+      <div class="count-pill" id="count-pill" title="未完成 / 总数">0</div>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="btn-min" title="隐藏到托盘">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M5 12h14" /></svg>
+      </button>
+      <button class="icon-btn" id="btn-settings" title="设置">
+        <svg viewBox="0 0 24 24" class="ico">
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.7 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.7a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.7a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.3 9v.09A1.7 1.7 0 0 0 20.86 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15z" />
+        </svg>
+      </button>
+    </header>
+
+    <!-- ==================== 收起状态摘要条 ==================== -->
+    <div class="collapsed-bar hidden" id="collapsed-bar">
+      <span class="dot" id="collapse-dot"></span>
+      <span id="collapse-text">暂无待办</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="btn-add-quick" title="快速添加">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+    </div>
+
+    <!-- ==================== 主体 ==================== -->
+    <main class="body" id="body">
+      <div class="summary" id="summary">
+        <span id="summary-text">今天还没有安排</span>
+        <div class="seg" id="filter-seg">
+          <button class="seg-btn active" data-filter="all">全部</button>
+          <button class="seg-btn" data-filter="active">未完成</button>
+          <button class="seg-btn" data-filter="done">已完成</button>
+        </div>
+      </div>
+
+      <ul class="list" id="list"></ul>
+
+      <div class="empty hidden" id="empty">
+        <div class="empty-emoji">🗒️</div>
+        <div class="empty-title" id="empty-title">保持桌面清爽</div>
+        <div class="empty-sub" id="empty-sub">在下面输入内容，回车即可添加</div>
+      </div>
+
+      <!-- ==================== 新增 ==================== -->
+      <div class="add-row" id="add-row">
+        <input type="text" id="input-title" placeholder="添加待办，回车保存…" autocomplete="off" />
+        <input type="datetime-local" id="input-due" title="到期时间（可选）" />
+        <button class="primary-btn" id="btn-add" title="添加">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
+      <div class="add-meta" id="add-meta">
+        <div class="prio-group" id="prio-group">
+          <button class="chip" data-prio="low">低</button>
+          <button class="chip active" data-prio="normal">普通</button>
+          <button class="chip" data-prio="high">高</button>
+        </div>
+        <span class="hint" id="add-hint"></span>
+      </div>
+    </main>
+
+    <!-- ==================== 设置面板 ==================== -->
+    <section class="settings hidden" id="settings">
+      <header class="settings-head">
+        <strong>设置</strong>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btn-settings-close">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </header>
+
+      <nav class="tabs" id="settings-tabs">
+        <button class="tab active" data-tab="general">通用</button>
+        <button class="tab" data-tab="window">窗口</button>
+        <button class="tab" data-tab="git">Git 同步</button>
+        <button class="tab" data-tab="data">数据</button>
+      </nav>
+
+      <div class="settings-body">
+        <!-- ---------- 通用 ---------- -->
+        <div class="pane active" data-pane="general">
+          <label class="row">
+            <span>到期提醒</span>
+            <input type="checkbox" id="s-reminder-enabled" class="switch" />
+          </label>
+          <label class="row">
+            <span>提前提醒</span>
+            <select id="s-lead">
+              <option value="0">准点</option>
+              <option value="1">提前 1 分钟</option>
+              <option value="5">提前 5 分钟</option>
+              <option value="10">提前 10 分钟</option>
+              <option value="30">提前 30 分钟</option>
+              <option value="60">提前 1 小时</option>
+              <option value="1440">提前 1 天</option>
+            </select>
+          </label>
+          <label class="row">
+            <span>通知声音</span>
+            <input type="checkbox" id="s-sound" class="switch" />
+          </label>
+          <label class="row">
+            <span>语音播报到期事项</span>
+            <input type="checkbox" id="s-voice" class="switch" />
+          </label>
+          <label class="row">
+            <span>开机自动启动</span>
+            <input type="checkbox" id="s-autostart" class="switch" />
+          </label>
+          <div class="row">
+            <span>排序方式</span>
+            <select id="s-sort">
+              <option value="manual">手动（可拖拽）</option>
+              <option value="due">按到期时间</option>
+              <option value="priority">按优先级</option>
+              <option value="created">按创建时间</option>
+            </select>
+          </div>
+          <p class="note" id="notify-perm-note"></p>
+          <button class="ghost-btn" id="btn-test-notify">发送一条测试通知</button>
+        </div>
+
+        <!-- ---------- 窗口 ---------- -->
+        <div class="pane" data-pane="window">
+          <label class="row">
+            <span>窗口置顶</span>
+            <input type="checkbox" id="s-on-top" class="switch" />
+          </label>
+          <div class="row">
+            <span>不透明度</span>
+            <input type="range" id="s-opacity" min="50" max="100" step="1" />
+            <output id="s-opacity-out">96%</output>
+          </div>
+          <div class="row">
+            <span>主题</span>
+            <select id="s-theme">
+              <option value="dark">深色</option>
+              <option value="light">浅色</option>
+              <option value="auto">跟随系统</option>
+            </select>
+          </div>
+          <label class="row">
+            <span>启动后隐藏到托盘</span>
+            <input type="checkbox" id="s-start-hidden" class="switch" />
+          </label>
+          <button class="ghost-btn" id="btn-reset-window">把窗口移回屏幕右上角</button>
+          <p class="note">提示：按住标题栏任意空白处可拖动窗口；拖动窗口大小会自动记忆。</p>
+        </div>
+
+        <!-- ---------- Git ---------- -->
+        <div class="pane" data-pane="git">
+          <p class="note">
+            数据保存在本机 <code id="data-path">…</code>。填写远程仓库后，
+            本地提交由内置 libgit2 完成，网络操作复用系统 <code>git</code>（可用 SSH key 或凭据管理器）。
+          </p>
+          <div class="row">
+            <span>远程地址</span>
+            <input type="text" id="s-git-url" placeholder="git@github.com:me/todo-data.git" />
+          </div>
+          <div class="row">
+            <span>远程名 / 分支</span>
+            <input type="text" id="s-git-remote" placeholder="origin" />
+            <input type="text" id="s-git-branch" placeholder="main" />
+          </div>
+          <div class="row">
+            <span>提交者</span>
+            <input type="text" id="s-git-name" placeholder="你的名字" />
+            <input type="text" id="s-git-email" placeholder="you@example.com" />
+          </div>
+          <p class="note">HTTPS 私有仓库：填用户名 + 访问令牌（Token）；令牌只用于本次会话的凭据助手，不会写入仓库配置。</p>
+          <div class="row">
+            <span>用户名 / 令牌</span>
+            <input type="text" id="s-git-user" placeholder="git 用户名（可选）" />
+            <input type="password" id="s-git-token" placeholder="Token（可选）" />
+          </div>
+          <div class="row">
+            <span>SSH 私钥</span>
+            <input type="text" id="s-git-ssh" placeholder="~/.ssh/id_ed25519（可选）" />
+          </div>
+          <div class="row">
+            <span>自动同步</span>
+            <input type="checkbox" id="s-git-auto" class="switch" />
+          </div>
+          <div class="row">
+            <span>提交信息</span>
+            <input type="text" id="s-git-msg" placeholder="desk-todo: 同步待办数据" />
+          </div>
+          <div class="btn-row">
+            <button class="ghost-btn" id="btn-git-test">测试连接</button>
+            <button class="ghost-btn" id="btn-git-init">初始化/提交</button>
+            <button class="primary-btn small" id="btn-git-sync">立即同步</button>
+          </div>
+          <div class="git-status" id="git-status">尚未检查</div>
+        </div>
+
+        <!-- ---------- 数据 ---------- -->
+        <div class="pane" data-pane="data">
+          <div class="btn-row">
+            <button class="ghost-btn" id="btn-export">导出 JSON</button>
+            <button class="ghost-btn" id="btn-import-merge">导入（合并）</button>
+            <button class="ghost-btn" id="btn-import-replace">导入（覆盖）</button>
+          </div>
+          <label class="row">
+            <span>保留已完成项</span>
+            <input type="checkbox" id="s-keep-done" class="switch" checked />
+          </label>
+          <button class="ghost-btn" id="btn-clear-done">清除已完成</button>
+          <button class="ghost-btn danger" id="btn-open-dir">打开数据目录</button>
+          <p class="note">
+            数据文件为 <code>todos.json</code>（原子写入），同级 <code>backups/</code> 每小时留一份最近 12 份备份。
+            删除的待办可通过 <kbd>⌘/Ctrl+Z</kbd> 撤销。
+          </p>
+          <p class="note" id="app-info"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 轻提示 ==================== -->
+    <div class="toast hidden" id="toast"></div>
+    <div class="confirm hidden" id="confirm">
+      <div class="confirm-box">
+        <div id="confirm-text">确认操作？</div>
+        <div class="btn-row end">
+          <button class="ghost-btn" id="confirm-no">取消</button>
+          <button class="primary-btn small" id="confirm-yes">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== 输入弹窗（替代 WKWebView 不支持的 prompt） ==================== -->
+    <div class="confirm hidden" id="prompt">
+      <div class="confirm-box">
+        <div id="prompt-text">请输入</div>
+        <input type="text" id="prompt-input" style="width: 100%; margin: 9px 0 2px" />
+        <div class="btn-row end">
+          <button class="ghost-btn" id="prompt-no">取消</button>
+          <button class="primary-btn small" id="prompt-yes">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

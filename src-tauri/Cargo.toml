@@ -1,0 +1,45 @@
+[package]
+name = "desk-todo"
+version = "0.1.0"
+description = "常驻桌面的待办事项小窗"
+authors = ["desk-todo"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "desk_todo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "2.4"
+tauri-plugin-dialog = "2.7"
+tauri-plugin-autostart = "2.5"
+tauri-plugin-opener = "2.5"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+# 托盘图标解码（PNG -> RGBA）
+image = { version = "0.25", default-features = false, features = ["png"] }
+# 本地提交/状态：libgit2（纯本地，不需要 OpenSSL/网络）
+git2 = { version = "0.21", default-features = false }
+# 查找系统 git 可执行文件
+which = "8"
+
+[features]
+# 由 `tauri build` / `tauri dev` 自动注入
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
