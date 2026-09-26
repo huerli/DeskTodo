@@ -57,15 +57,23 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```bash
 source scripts/env.sh          # 注入 cargo / node 环境
-bash scripts/build.sh          # release 构建，出当前平台安装包
-bash scripts/run.sh            # 直接启动
+bash scripts/build.sh release app   # release 构建，出 .app
+bash scripts/run.sh            # 直接启动（免安装）
+```
+
+想做成可安装的安装包（macOS）：
+
+```bash
+bash scripts/make-dmg.sh       # 生成 dist/DeskTodo_<版本>_<架构>.dmg
 ```
 
 首次构建需要编译 Tauri 依赖，约 3–8 分钟；之后增量构建在 10 秒级。
 
+> 注意：前端资源是**编译期内嵌**的。改了 `src/` 下的文件必须重新 `build`，只重启进程无效。
+
 ### 3. 开发模式（热重载前端）
 
-前端是纯静态文件（`src/index.html`、`src/styles.css`、`src/app.js`），改完前端 **重启应用** 即生效，
+前端是纯静态文件（`src/index.html`、`src/styles.css`、`src/app.js`），改完前端 **重新构建并重启应用** 即生效，
 不需要打包工具。需要改窗口配置（`src-tauri/tauri.conf.json`）时：
 
 ```bash
@@ -88,6 +96,31 @@ bash scripts/build.sh release appimage,deb  # Linux
 
 产物位置：`src-tauri/target/release/bundle/<类型>/`（若设置了 `CARGO_TARGET_DIR` 则为
 `.cargo-target/release/bundle/<类型>/`）。
+
+### 生成 macOS 安装包（推荐）
+
+```bash
+bash scripts/build.sh release app     # 1) 先出 .app
+bash scripts/make-dmg.sh              # 2) 打成可安装的 DMG
+```
+
+`make-dmg.sh` 生成的 DMG 里包含：`DeskTodo.app`、指向「应用程序」的快捷方式、
+以及一份 `安装说明.txt`。它会自动挂载校验内容后再卸载，产物落在 `dist/`。
+
+> 与 `tauri build --bundles dmg` 的区别：后者生成的 DMG 只有 .app 本身，
+> 用户需要自己把 App 拖到「应用程序」；本脚本额外放了快捷方式和说明。
+
+### 分发给别人之前（重要）
+
+本机构建的 `.app` **没有签名**，别人下载后 macOS 会拦下。接收方需要：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
+```
+
+或者右键点 App → 打开 → 再点「打开」。要彻底免除这一步，需要 Apple Developer
+账号做签名与公证（在 `tauri.conf.json` 的 `bundle.macOS` 里配置 `signingIdentity`
+与 `notarize`）。
 
 | 平台 | 产物 | 系统依赖 |
 | --- | --- | --- |
@@ -284,6 +317,7 @@ desk-todo/
 │  ├─ gen_icons.py             派生 PNG / ICO / ICNS
 │  ├─ icons.sh                 一键重新生成图标
 │  ├─ build.sh                 构建 + 打包
+│  ├─ make-dmg.sh              生成带「应用程序」快捷方式的 DMG
 │  └─ run.sh                   启动
 └─ .github/workflows/build.yml 三平台 CI 打包
 ```
