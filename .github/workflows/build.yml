@@ -41,14 +41,31 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
+          # 注意：Tauri v2 用 libayatana-appindicator3-dev。
+          # 不要同时装 libappindicator3-dev —— Ubuntu 22.04 上两者互相 Conflicts，
+          # 一起装会直接报 "held broken packages" 并让整个 job 失败。
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
             libssl-dev \
             build-essential \
-            curl wget file libxdo-dev libayatana-appindicator3-dev
+            curl wget file libxdo-dev
+
+      - name: 确认 Linux 依赖已装上
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          set -e
+          for pkg in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf; do
+            if dpkg -s "$pkg" >/dev/null 2>&1; then
+              echo "  ✓ $pkg"
+            else
+              echo "  ✗ $pkg 未安装"
+              exit 1
+            fi
+          done
+          pkg-config --modversion webkit2gtk-4.1 | sed 's/^/  webkit2gtk-4.1 版本: /'
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
