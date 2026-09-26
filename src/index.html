@@ -99,15 +99,15 @@
       </header>
 
       <nav class="tabs" id="settings-tabs">
-        <button class="tab active" data-tab="general">通用</button>
+        <button class="tab" data-tab="general">通用</button>
         <button class="tab" data-tab="window">窗口</button>
-        <button class="tab" data-tab="git">Git 同步</button>
+        <button class="tab active" data-tab="git">Git 同步</button>
         <button class="tab" data-tab="data">数据</button>
       </nav>
 
       <div class="settings-body">
         <!-- ---------- 通用 ---------- -->
-        <div class="pane active" data-pane="general">
+        <div class="pane" data-pane="general">
           <label class="row">
             <span>到期提醒</span>
             <input type="checkbox" id="s-reminder-enabled" class="switch" />
@@ -174,7 +174,7 @@
         </div>
 
         <!-- ---------- Git ---------- -->
-        <div class="pane" data-pane="git">
+        <div class="pane active" data-pane="git">
           <p class="note">
             数据保存在本机 <code id="data-path">…</code>。填写远程仓库后，
             本地提交由内置 libgit2 完成，网络操作复用系统 <code>git</code>（可用 SSH key 或凭据管理器）。

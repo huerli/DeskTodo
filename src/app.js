@@ -577,6 +577,37 @@ function syncTimeField() {
   el("btn-clear-time").classList.toggle("hidden", !has);
 }
 
+/* ---------------------------------------------------------- 设置面板 Tab */
+
+const SETTINGS_TABS = ["general", "window", "git", "data"];
+/** 默认展示「Git 同步」——数据同步是打开设置时最常见的目的 */
+const DEFAULT_SETTINGS_TAB = "git";
+const TAB_STORE_KEY = "desktodo.settingsTab";
+
+function loadSettingsTab() {
+  try {
+    const saved = localStorage.getItem(TAB_STORE_KEY);
+    if (saved && SETTINGS_TABS.includes(saved)) return saved;
+  } catch {}
+  return DEFAULT_SETTINGS_TAB;
+}
+
+function setSettingsTab(name, persist = true) {
+  const tab = SETTINGS_TABS.includes(name) ? name : DEFAULT_SETTINGS_TAB;
+  document.querySelectorAll("#settings-tabs .tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.tab === tab);
+  });
+  document.querySelectorAll(".settings-body .pane").forEach((p) => {
+    p.classList.toggle("active", p.dataset.pane === tab);
+  });
+  if (persist) {
+    try {
+      localStorage.setItem(TAB_STORE_KEY, tab);
+    } catch {}
+  }
+  return tab;
+}
+
 /* ---------------------------------------------------------- 命令包装 */
 
 async function run(fn) {
@@ -751,6 +782,8 @@ function installEvents() {
   // 设置面板
   el("btn-settings").addEventListener("click", async () => {
     await saveSettings(false).catch(() => {});
+    // 恢复上次查看的分页（首次打开为「Git 同步」）
+    setSettingsTab(loadSettingsTab(), false);
     $.settings.classList.remove("hidden");
     try {
       await invoke("get_autostart").then((v) => (el("s-autostart").checked = !!v));
@@ -764,10 +797,7 @@ function installEvents() {
   el("settings-tabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".tab");
     if (!tab) return;
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-    document.querySelectorAll(".pane").forEach((p) =>
-      p.classList.toggle("active", p.dataset.pane === tab.dataset.tab)
-    );
+    setSettingsTab(tab.dataset.tab);
   });
 
   // 过滤
@@ -1068,6 +1098,11 @@ async function boot() {
   if (!collapsed) $.inputTitle.focus();
   // 每 30 秒刷新一次相对时间显示
   setInterval(render, 30000);
+
+  // 诊断：记录设置面板的默认分页，便于确认 tab 默认值是否生效
+  const activeTab = document.querySelector("#settings-tabs .tab.active")?.dataset.tab;
+  const activePane = document.querySelector(".settings-body .pane.active")?.dataset.pane;
+  trace(`boot: 设置面板默认分页 tab=${activeTab} pane=${activePane}`);
 }
 
 function start() {
