@@ -244,6 +244,35 @@
             数据文件为 <code>todos.json</code>（原子写入），同级 <code>backups/</code> 每小时留一份最近 12 份备份。
             删除的待办可通过 <kbd>⌘/Ctrl+Z</kbd> 撤销。
           </p>
+
+          <!-- ---------- 每日工作情况 ---------- -->
+          <div class="section-title">每日工作情况</div>
+          <label class="row">
+            <span>自动汇总已完成的待办</span>
+            <input type="checkbox" id="s-summary-enabled" class="switch" />
+          </label>
+          <label class="row">
+            <span>写入处理过程</span>
+            <input type="checkbox" id="s-summary-notes" class="switch" />
+          </label>
+          <div class="row">
+            <span>额外导出目录</span>
+            <input type="text" id="s-summary-dir" placeholder="留空则只写数据目录（支持 ~/）" />
+          </div>
+          <div class="row">
+            <span>文件名</span>
+            <input type="text" id="s-summary-file" placeholder="{date}.md" />
+          </div>
+          <div class="btn-row">
+            <button class="ghost-btn" id="btn-summary-gen">立即生成今日总结</button>
+            <button class="ghost-btn" id="btn-summary-view">预览</button>
+          </div>
+          <pre class="summary-preview hidden" id="summary-preview"></pre>
+          <p class="note">
+            每完成一项待办即刷新 <code>reports/&lt;日期&gt;.md</code>；内容含完成明细、处理过程与待跟进事项。
+            <code>reports/</code> 会随待办数据一起同步到 Git。
+          </p>
+
           <p class="note" id="app-info"></p>
         </div>
       </div>

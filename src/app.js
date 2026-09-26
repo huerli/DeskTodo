@@ -652,6 +652,12 @@ function syncSettingsUI() {
       : "ssh 默认配置（~/.ssh/config + 约定密钥）";
   set("s-git-auto", s.sync.auto_commit);
   el("s-git-msg").value = s.sync.commit_message ?? "";
+
+  const ds = s.daily_summary ?? {};
+  set("s-summary-enabled", ds.enabled !== false);
+  set("s-summary-notes", ds.include_notes !== false);
+  el("s-summary-dir").value = ds.export_dir ?? "";
+  el("s-summary-file").value = ds.filename ?? "{date}.md";
 }
 
 function collectSettings() {
@@ -676,6 +682,12 @@ function collectSettings() {
   s.sync.ssh_key_path = el("s-git-ssh").value.trim().startsWith("ssh ") ? "" : el("s-git-ssh").value.trim();
   s.sync.auto_commit = el("s-git-auto").checked;
   s.sync.commit_message = el("s-git-msg").value.trim() || "desk-todo: 同步待办数据";
+
+  s.daily_summary = s.daily_summary ?? {};
+  s.daily_summary.enabled = el("s-summary-enabled").checked;
+  s.daily_summary.include_notes = el("s-summary-notes").checked;
+  s.daily_summary.export_dir = el("s-summary-dir").value.trim();
+  s.daily_summary.filename = el("s-summary-file").value.trim() || "{date}.md";
   return s;
 }
 
@@ -1024,7 +1036,8 @@ function installEvents() {
   syncTimeField();
 
   // 设置项即时保存
-  for (const id of ["s-reminder-enabled", "s-lead", "s-sound", "s-voice", "s-on-top", "s-theme", "s-start-hidden", "s-sort", "s-git-auto", "s-git-msg", "s-git-url", "s-git-remote", "s-git-branch", "s-git-name", "s-git-email", "s-git-user", "s-git-token", "s-git-ssh"]) {
+  for (const id of ["s-reminder-enabled", "s-lead", "s-sound", "s-voice", "s-on-top", "s-theme", "s-start-hidden", "s-sort", "s-git-auto", "s-git-msg", "s-git-url", "s-git-remote", "s-git-branch", "s-git-name", "s-git-email", "s-git-user", "s-git-token", "s-git-ssh",
+      "s-summary-enabled", "s-summary-notes", "s-summary-dir", "s-summary-file"]) {
     const node = el(id);
     node?.addEventListener("change", () => saveSettingsSoon());
   }
@@ -1100,6 +1113,27 @@ function installEvents() {
     if (!p || p === "…") return toast("数据目录未知", true);
     if (openPath) await openPath(p).catch((e) => toast(String(e), true));
     else toast(p);
+  });
+
+  // ---- 每日工作情况 ----
+  el("btn-summary-gen").addEventListener("click", async () => {
+    await saveSettings(false).catch(() => {});
+    try {
+      const path = await invoke("generate_daily_summary");
+      toast("已生成：" + path);
+      await showSummaryPreview();
+    } catch (e) {
+      toast(String(e), true);
+    }
+  });
+
+  el("btn-summary-view").addEventListener("click", async () => {
+    const box = el("summary-preview");
+    if (!box.classList.contains("hidden")) {
+      box.classList.add("hidden");
+      return;
+    }
+    await showSummaryPreview();
   });
 
   // 确认框
@@ -1183,6 +1217,18 @@ async function doImport(replace) {
   }
 }
 
+/** 展示当日总结预览（内容由后端渲染，保证与落盘文件一致） */
+async function showSummaryPreview() {
+  const box = el("summary-preview");
+  try {
+    const text = await invoke("read_daily_summary", { date: null });
+    box.textContent = text;
+    box.classList.remove("hidden");
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
 /* ---------------------------------------------------------- 后端事件 */
 
 async function installBackendEvents() {
@@ -1206,6 +1252,22 @@ async function installBackendEvents() {
   });
 
   await listen("ui://sync-request", () => doGitSync());
+
+  // 每次有待办完成，后端都会刷新当日总结并广播事件
+  await listen("summary://updated", (ev) => {
+    const path = typeof ev.payload === "string" ? ev.payload : "";
+    const name = path.split("/").pop() || "日报";
+    toast(`已更新每日总结：${name}`);
+    // 若预览面板开着，同步刷新内容
+    const box = el("summary-preview");
+    if (!box.classList.contains("hidden")) showSummaryPreview();
+  });
+
+  await listen("summary://exported", (ev) => {
+    if (typeof ev.payload === "string" && ev.payload) {
+      toast("已导出到：" + ev.payload);
+    }
+  });
 
   await listen("git://status", (ev) => {
     if (ev.payload?.message) setGitStatus(formatGitStatus(ev.payload), ev.payload.dirty ? "" : "ok");

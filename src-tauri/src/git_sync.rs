@@ -406,6 +406,7 @@ const GITIGNORE_PATTERNS: [&str; 5] = [
     "backups/",
     "todos.corrupted-*.json",
 ];
+// 注意：reports/ 不在此列表中 —— 每日总结应当随数据一起同步到其他设备。
 
 /// 幂等地维护 .gitignore：缺失的规则会被追加，已存在的内容不动。
 /// 之前只在文件不存在时创建，导致已有仓库拿不到新增的忽略规则。

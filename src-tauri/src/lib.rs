@@ -2,10 +2,11 @@
 
 mod commands;
 mod git_sync;
-mod model;
+pub mod model;
 pub mod self_test;
-mod store;
-mod tray;
+pub mod store;
+pub mod summary;
+pub mod tray;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -240,6 +241,9 @@ pub fn run() {
             commands::hide_window,
             commands::show_window,
             commands::reposition_window,
+            commands::generate_daily_summary,
+            commands::read_daily_summary,
+            commands::today_done_count,
             commands::quit_app,
             commands::export_data,
             commands::import_data,

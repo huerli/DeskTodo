@@ -37,7 +37,7 @@ pub fn run() -> Result<(), String> {
     let dir = tmpdir("data");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    println!("\n[1/8] 数据存储");
+    println!("\n[1/9] 数据存储");
     let mut data = AppData::default();
     data.settings.sync.author_name = "SelfTest".into();
     data.settings.sync.author_email = "selftest@localhost".into();
@@ -57,7 +57,7 @@ pub fn run() -> Result<(), String> {
         "损坏文件被改名留档"
     );
 
-    println!("\n[2/8] 待办 CRUD");
+    println!("\n[2/9] 待办 CRUD");
     let mut data = AppData::default();
     let now = chrono::Local::now();
     for (i, title) in ["alpha", "beta", "gamma"].iter().enumerate() {
@@ -118,7 +118,7 @@ pub fn run() -> Result<(), String> {
         "撤销删除后该项回来"
     );
 
-    println!("\n[3/8] 落盘 + 重读一致性");
+    println!("\n[3/9] 落盘 + 重读一致性");
     store::save(&dir, &data)?;
     let reloaded = store::load(&dir);
     check!(reloaded.todos.len() == data.todos.len(), "数量一致");
@@ -151,7 +151,7 @@ pub fn run() -> Result<(), String> {
         "格式错误的文件导入时报错而非 panic"
     );
 
-    println!("\n[4/8] 到期提醒判定");
+    println!("\n[4/9] 到期提醒判定");
     let lead_minutes: i64 = 0;
     let due_now = (chrono::Local::now() - chrono::Duration::seconds(5)).to_rfc3339();
     let parsed = chrono::DateTime::parse_from_rfc3339(&due_now)
@@ -172,7 +172,7 @@ pub fn run() -> Result<(), String> {
     let notified = t.notified_at.is_some();
     check!(notified, "已提醒标记可阻止重复提醒");
 
-    println!("\n[5/8] Git 本地提交");
+    println!("\n[5/9] Git 本地提交");
     let git_dir = tmpdir("git");
     std::fs::create_dir_all(&git_dir).map_err(|e| e.to_string())?;
     let remote_dir = tmpdir("remote");
@@ -236,7 +236,7 @@ pub fn run() -> Result<(), String> {
     check!(st.last_commit.is_some(), "能读到最近提交：{:?}", st.last_commit);
     check!(!st.dirty, "提交后工作区干净");
 
-    println!("\n[6/8] Git 推送 / 拉取（本地裸仓库作为远程）");
+    println!("\n[6/9] Git 推送 / 拉取（本地裸仓库作为远程）");
     let git_bin = crate::git_sync::git_binary();
     check!(git_bin.is_some(), "系统 git 可用: {:?}", git_bin);
     let bare = remote_dir.join("todo-data.git");
@@ -303,7 +303,7 @@ pub fn run() -> Result<(), String> {
         "拉取后本地已包含另一台设备的数据"
     );
 
-    println!("\n[7/8] SSH 选项（防止首次连接新主机时 Host key verification failed）");
+    println!("\n[7/9] SSH 选项（防止首次连接新主机时 Host key verification failed）");
     // 应用以 GIT_TERMINAL_PROMPT=0 运行，SSH 无法询问“是否信任该主机”，
     // 若不带 StrictHostKeyChecking=accept-new 就会直接报 Host key verification failed。
     let ssh_cmd = crate::git_sync::ssh_command("");
@@ -450,7 +450,7 @@ pub fn run() -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&ab_dir);
     }
 
-    println!("\n[8/8] 历史无关时的错误提示");
+    println!("\n[8/9] 历史无关时的错误提示");
 
     // 场景：本地与远端在**同一个分支上各自拥有无关的提交**。
     // 这才是用户实际踩到的情形 —— 本地在 master 上有独立提交，
@@ -569,6 +569,81 @@ pub fn run() -> Result<(), String> {
 
         let _ = std::fs::remove_dir_all(&div_local);
         let _ = std::fs::remove_dir_all(&div_remote);
+    }
+
+    println!("\n[9/9] 每日工作情况总结");
+    {
+        let sdir = tmpdir("summary");
+        std::fs::create_dir_all(&sdir).map_err(|e| e.to_string())?;
+        let now = chrono::Local::now();
+        let today = now.format("%Y-%m-%d").to_string();
+        let yesterday = (now - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        let mk = |title: &str, done: bool, at: chrono::DateTime<chrono::Local>, prio: Priority, notes: &str| Todo {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: title.into(),
+            notes: notes.into(),
+            done,
+            due_at: None,
+            priority: prio,
+            tags: vec![],
+            created_at: at.to_rfc3339(),
+            updated_at: at.to_rfc3339(),
+            completed_at: if done { Some(at.to_rfc3339()) } else { None },
+            notified_at: None,
+            order: 10,
+        };
+
+        let mut sd = AppData::default();
+        sd.todos.push(mk("今天完成的高优事项", true, now - chrono::Duration::hours(2), Priority::High, "第一步\n第二步"));
+        sd.todos.push(mk("今天完成的普通事项", true, now - chrono::Duration::hours(1), Priority::Normal, ""));
+        sd.todos.push(mk("昨天完成的事项", true, now - chrono::Duration::days(1), Priority::Normal, ""));
+        sd.todos.push(mk("尚未完成的事项", false, now, Priority::Normal, ""));
+        sd.settings.daily_summary.enabled = true;
+        sd.settings.daily_summary.include_notes = true;
+
+        check!(crate::summary::today_done_count(&sd) == 2, "今日完成计数正确（2 项，排除昨天的）");
+
+        let body = crate::summary::render(&sd, &today);
+        check!(body.contains(&format!("# {today} 工作情况")), "标题含日期");
+        check!(body.contains("**完成 2 项**"), "概览统计正确");
+        check!(body.contains("其中高优 1 项"), "高优统计正确");
+        check!(body.contains("今天完成的高优事项"), "包含今日完成项");
+        check!(!body.contains("昨天完成的事项"), "不含非今日完成项");
+        check!(body.contains("> 第一步"), "处理过程被引用进总结");
+        check!(body.contains("## 待跟进"), "含待跟进小节");
+        check!(body.contains("- [ ] 尚未完成的事项"), "待跟进列出未完成项");
+
+        // 落盘
+        let (path, export) = crate::summary::generate_for(&sdir, &sd, &today)?;
+        check!(path.is_file(), "总结已写入 {}", path.display());
+        check!(export.is_none(), "未配置导出目录时不额外导出");
+        let on_disk = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        check!(on_disk == body, "落盘内容与渲染结果一致");
+
+        // 额外导出到指定目录
+        let exp_dir = sdir.join("exported");
+        sd.settings.daily_summary.export_dir = exp_dir.to_string_lossy().to_string();
+        sd.settings.daily_summary.filename = "{date}.md".into();
+        let (_, export) = crate::summary::generate_for(&sdir, &sd, &today)?;
+        let export = export.ok_or("应产生导出文件")?;
+        check!(export.is_file(), "按配置额外导出到 {}", export.display());
+
+        // 关闭开关
+        sd.settings.daily_summary.enabled = false;
+        check!(!sd.settings.daily_summary.enabled, "可以关闭自动汇总");
+
+        // 其它日期：昨天应包含昨天那条
+        let ybody = crate::summary::render(&sd, &yesterday);
+        check!(ybody.contains("昨天完成的事项"), "按日期过滤正确（昨天）");
+
+        // 空日期不 panic
+        let ebody = crate::summary::render(&sd, "2000-01-01");
+        check!(ebody.contains("暂无已完成的待办"), "无完成项时给出友好提示");
+
+        let _ = std::fs::remove_dir_all(&sdir);
     }
 
     // 清理临时目录

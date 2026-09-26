@@ -217,6 +217,40 @@ pub struct Settings {
     /// 启动时自动隐藏到托盘
     #[serde(default)]
     pub start_hidden: bool,
+    #[serde(default)]
+    pub daily_summary: DailySummarySettings,
+}
+
+/// 每日工作情况总结：把当天完成的待办自动汇总成 Markdown
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySummarySettings {
+    /// 有待办完成时自动生成/更新当日总结
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 额外导出到这个目录（留空则只写数据目录下的 reports/）
+    #[serde(default)]
+    pub export_dir: String,
+    /// 导出文件名模板，支持 {date}
+    #[serde(default = "default_summary_filename")]
+    pub filename: String,
+    /// 是否把已完成项的「处理过程」也写进总结
+    #[serde(default = "default_true")]
+    pub include_notes: bool,
+}
+
+fn default_summary_filename() -> String {
+    "{date}.md".into()
+}
+
+impl Default for DailySummarySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            export_dir: String::new(),
+            filename: default_summary_filename(),
+            include_notes: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

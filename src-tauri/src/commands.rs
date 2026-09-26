@@ -8,6 +8,34 @@ use tauri_plugin_notification::NotificationExt;
 
 // ---------------------------------------------------------------- 读取
 
+/// 落盘并在必要时刷新「今日工作情况」总结。
+///
+/// 为什么放在写盘之后：总结内容完全来自 AppData，
+/// 只有数据已持久化，生成的日报才可能与它一致。
+fn persist_and_summarize(app: &AppHandle, data: &AppData) -> Result<(), String> {
+    persist(app, data)?;
+    refresh_daily_summary(app, data);
+    Ok(())
+}
+
+/// 按需生成/更新当日总结。失败只记日志，不影响主流程 ——
+/// 日报是附加产物，不能因为它写失败就让「勾选完成」这类核心操作报错。
+fn refresh_daily_summary(app: &AppHandle, data: &AppData) {
+    if !data.settings.daily_summary.enabled {
+        return;
+    }
+    let dir = app.state::<AppState>().dir.clone();
+    match crate::summary::generate_today(&dir, data) {
+        Ok((path, export)) => {
+            let _ = app.emit("summary://updated", path.display().to_string());
+            if let Some(e) = export {
+                let _ = app.emit("summary://exported", e.display().to_string());
+            }
+        }
+        Err(e) => eprintln!("[summary] 生成每日总结失败: {e}"),
+    }
+}
+
 #[tauri::command]
 pub fn get_state(app: AppHandle) -> AppData {
     let mut d = snapshot(&app);
@@ -181,7 +209,7 @@ pub fn toggle_todo(app: AppHandle, id: String, done: Option<bool>) -> Result<App
         t.updated_at = now;
         d.clone()
     };
-    persist(&app, &data)?;
+    persist_and_summarize(&app, &data)?;
     Ok(data)
 }
 
@@ -219,7 +247,7 @@ pub fn restore_todo(app: AppHandle) -> Result<AppData, String> {
         }
         d.clone()
     };
-    persist(&app, &data)?;
+    persist_and_summarize(&app, &data)?;
     Ok(data)
 }
 
@@ -237,7 +265,7 @@ pub fn clear_completed(app: AppHandle) -> Result<AppData, String> {
         }
         d.clone()
     };
-    persist(&app, &data)?;
+    persist_and_summarize(&app, &data)?;
     Ok(data)
 }
 
@@ -382,6 +410,34 @@ pub fn reposition_window(app: AppHandle) -> Result<(), String> {
         d.clone()
     };
     persist(&app, &data)
+}
+
+/// 手动生成「今天」的工作情况总结，返回写入路径
+#[tauri::command]
+pub fn generate_daily_summary(app: AppHandle) -> Result<String, String> {
+    let data = snapshot(&app);
+    let dir = app.state::<AppState>().dir.clone();
+    let (path, export) = crate::summary::generate_today(&dir, &data)?;
+    match export {
+        Some(e) => Ok(format!("{}（已导出到 {}）", path.display(), e.display())),
+        None => Ok(path.display().to_string()),
+    }
+}
+
+/// 读取某天的总结内容（用于界面预览）。date 形如 2026-09-26，留空即今天。
+#[tauri::command]
+pub fn read_daily_summary(app: AppHandle, date: Option<String>) -> Result<String, String> {
+    let data = snapshot(&app);
+    let date = date
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    Ok(crate::summary::render(&data, &date))
+}
+
+/// 今天已完成的数量（供界面展示）
+#[tauri::command]
+pub fn today_done_count(app: AppHandle) -> usize {
+    crate::summary::today_done_count(&snapshot(&app))
 }
 
 #[tauri::command]
