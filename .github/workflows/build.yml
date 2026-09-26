@@ -160,17 +160,23 @@ jobs:
 
       # 手动触发没有 Release，产物只在 runner 上，跑完就没了。
       # 这一步保证任何一次运行都能从 Actions 页面直接下载安装包。
+      #
+      # 路径里的 `**` 不能省：macOS 两个 job 带了 --target，产物落在
+      #   src-tauri/target/<三元组>/release/bundle/
+      # 而 Linux/Windows 不带 --target，落在
+      #   src-tauri/target/release/bundle/
+      # 只写后者会漏掉 macOS（job 成功但制品为空）。
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: DeskTodo-${{ matrix.name }}
           if-no-files-found: warn
           path: |
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/**/release/bundle/**/*.deb
+            src-tauri/target/**/release/bundle/**/*.AppImage
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*.exe
 
 # =============================================================================
 # 附：若要同时保住 Ubuntu 22.04 的运行兼容性
