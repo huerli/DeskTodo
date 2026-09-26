@@ -4,6 +4,9 @@
 *.rs.bk
 Cargo.lock.orig
 
+# ---- 分发产物（本机打包结果，不入库）----
+/dist/
+
 # ---- Node ----
 /node_modules/
 .pnpm-store/
