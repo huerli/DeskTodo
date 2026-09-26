@@ -69,11 +69,15 @@ stages:
                 - ./output
 
   # ================================================================
-  # 阶段二：上传制品并发布（推 tag 时才有版本号意义）
+  # 阶段二：上传制品并发布
+  #   设为 trigger: manual（官方支持的阶段触发方式），上游构建成功后不会自动跑；
+  #   需要发版时在流水线页面手动点执行。这样手动跑构建不会误发版本号。
   # ================================================================
   - stage:
       name: publish
       displayName: 上传制品与发布
+      strategy: naturally
+      trigger: manual
       steps:
         - step: publish@general_artifacts
           name: upload_artifacts
