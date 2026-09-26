@@ -37,7 +37,7 @@ pub fn run() -> Result<(), String> {
     let dir = tmpdir("data");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    println!("\n[1/6] 数据存储");
+    println!("\n[1/7] 数据存储");
     let mut data = AppData::default();
     data.settings.sync.author_name = "SelfTest".into();
     data.settings.sync.author_email = "selftest@localhost".into();
@@ -57,7 +57,7 @@ pub fn run() -> Result<(), String> {
         "损坏文件被改名留档"
     );
 
-    println!("\n[2/6] 待办 CRUD");
+    println!("\n[2/7] 待办 CRUD");
     let mut data = AppData::default();
     let now = chrono::Local::now();
     for (i, title) in ["alpha", "beta", "gamma"].iter().enumerate() {
@@ -118,7 +118,7 @@ pub fn run() -> Result<(), String> {
         "撤销删除后该项回来"
     );
 
-    println!("\n[3/6] 落盘 + 重读一致性");
+    println!("\n[3/7] 落盘 + 重读一致性");
     store::save(&dir, &data)?;
     let reloaded = store::load(&dir);
     check!(reloaded.todos.len() == data.todos.len(), "数量一致");
@@ -151,7 +151,7 @@ pub fn run() -> Result<(), String> {
         "格式错误的文件导入时报错而非 panic"
     );
 
-    println!("\n[4/6] 到期提醒判定");
+    println!("\n[4/7] 到期提醒判定");
     let lead_minutes: i64 = 0;
     let due_now = (chrono::Local::now() - chrono::Duration::seconds(5)).to_rfc3339();
     let parsed = chrono::DateTime::parse_from_rfc3339(&due_now)
@@ -172,7 +172,7 @@ pub fn run() -> Result<(), String> {
     let notified = t.notified_at.is_some();
     check!(notified, "已提醒标记可阻止重复提醒");
 
-    println!("\n[5/6] Git 本地提交");
+    println!("\n[5/7] Git 本地提交");
     let git_dir = tmpdir("git");
     std::fs::create_dir_all(&git_dir).map_err(|e| e.to_string())?;
     let remote_dir = tmpdir("remote");
@@ -190,12 +190,45 @@ pub fn run() -> Result<(), String> {
     check!(git_dir.join(".git").is_dir(), "init 生成 .git");
     check!(git_dir.join(".gitignore").is_file(), "生成 .gitignore");
 
+    // 诊断日志不得进版本库：模拟应用写出 boot-trace.log / frontend.log，
+    // 提交后这些文件不应出现在索引里（回归：曾因 .gitignore 只在文件不存在时
+    // 创建，导致已有仓库拿不到新增的忽略规则）
+    std::fs::write(git_dir.join("boot-trace.log"), "[00:00:00] boot\n").map_err(|e| e.to_string())?;
+    std::fs::write(git_dir.join("frontend.log"), "[info] boot\n").map_err(|e| e.to_string())?;
+    // 故意先放一个内容不全的 .gitignore，验证规则会被补全而不是被跳过
+    std::fs::write(git_dir.join(".gitignore"), "# 用户自己的规则\nmy-notes.txt\n")
+        .map_err(|e| e.to_string())?;
+
     // 用真实数据文件做一次提交
     let mut gdata = data.clone();
     gdata.todos.truncate(1);
     store::save(&git_dir, &gdata)?;
     let committed = git.commit_all(&settings, "selftest: 首次提交")?;
     check!(committed, "首次提交成功");
+
+    let ignore_text =
+        std::fs::read_to_string(git_dir.join(".gitignore")).map_err(|e| e.to_string())?;
+    check!(
+        ignore_text.contains("my-notes.txt"),
+        "补全 .gitignore 时不破坏用户已有规则"
+    );
+    check!(
+        ignore_text.lines().any(|l| l.trim() == "*.log"),
+        "已有 .gitignore 被补上 *.log 规则"
+    );
+    let tracked = {
+        let repo = git2::Repository::open(&git_dir).map_err(|e| e.to_string())?;
+        let index = repo.index().map_err(|e| e.to_string())?;
+        index
+            .iter()
+            .filter_map(|e| String::from_utf8(e.path.clone()).ok())
+            .collect::<Vec<String>>()
+    };
+    check!(
+        !tracked.iter().any(|p| p.ends_with(".log")),
+        "诊断日志文件未被纳入版本库（索引中无 .log）"
+    );
+
     let again = git.commit_all(&settings, "selftest: 无改动")?;
     check!(!again, "无改动时不产生空提交");
     let st = git.status(&settings);
@@ -203,7 +236,7 @@ pub fn run() -> Result<(), String> {
     check!(st.last_commit.is_some(), "能读到最近提交：{:?}", st.last_commit);
     check!(!st.dirty, "提交后工作区干净");
 
-    println!("\n[6/6] Git 推送 / 拉取（本地裸仓库作为远程）");
+    println!("\n[6/7] Git 推送 / 拉取（本地裸仓库作为远程）");
     let git_bin = crate::git_sync::git_binary();
     check!(git_bin.is_some(), "系统 git 可用: {:?}", git_bin);
     let bare = remote_dir.join("todo-data.git");
@@ -269,6 +302,85 @@ pub fn run() -> Result<(), String> {
         merged.todos.iter().any(|t| t.title == "peer-device-item"),
         "拉取后本地已包含另一台设备的数据"
     );
+
+    println!("\n[7/7] SSH 选项（防止首次连接新主机时 Host key verification failed）");
+    // 应用以 GIT_TERMINAL_PROMPT=0 运行，SSH 无法询问“是否信任该主机”，
+    // 若不带 StrictHostKeyChecking=accept-new 就会直接报 Host key verification failed。
+    let ssh_cmd = crate::git_sync::ssh_command("");
+    check!(
+        ssh_cmd.contains("StrictHostKeyChecking=accept-new"),
+        "默认 SSH 命令包含 accept-new：{ssh_cmd}"
+    );
+    check!(
+        ssh_cmd.contains("BatchMode=yes"),
+        "默认 SSH 命令包含 BatchMode=yes（不会阻塞等待输入）"
+    );
+    check!(!ssh_cmd.contains("-i "), "未指定私钥时不带 -i 参数");
+    let ssh_cmd_key = crate::git_sync::ssh_command("~/.ssh/id_ed25519");
+    check!(
+        ssh_cmd_key.contains("-i ~/.ssh/id_ed25519") && ssh_cmd_key.contains("IdentitiesOnly=yes"),
+        "指定私钥时带上 -i 与 IdentitiesOnly：{ssh_cmd_key}"
+    );
+
+    // 用一个“必然连不上”的 SSH 地址验证选项确实生效：
+    //   修复前 → Host key verification failed
+    //   修复后 → Connection refused（说明 accept-new 生效，已推进到连接阶段）
+    {
+        let ssh_probe = tmpdir("sshprobe");
+        std::fs::create_dir_all(&ssh_probe).map_err(|e| e.to_string())?;
+        let probe_git = crate::git_sync::GitManager::new(ssh_probe.clone());
+        crate::git_sync::init_repo(&ssh_probe, &settings)?;
+        let mut probe_data = AppData::default();
+        probe_data.todos.push(Todo {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: "ssh-probe".into(),
+            notes: String::new(),
+            done: false,
+            due_at: None,
+            priority: Priority::Normal,
+            tags: vec![],
+            created_at: chrono::Local::now().to_rfc3339(),
+            updated_at: chrono::Local::now().to_rfc3339(),
+            completed_at: None,
+            notified_at: None,
+            order: 10,
+        });
+        store::save(&ssh_probe, &probe_data)?;
+
+        let mut probe_settings = settings.clone();
+        // 保留端口（不能省，否则会被当成 scp 风格路径），落在 TEST-NET-1 网段
+        probe_settings.remote_url = "ssh://git@192.0.2.1:22/probe/repo.git".into();
+        probe_settings.ssh_key_path = String::new();
+        let err = probe_git
+            .sync_now("selftest: ssh 探测", Some(probe_settings), None)
+            .err()
+            .unwrap_or_default();
+        check!(
+            !err.contains("Host key verification failed"),
+            "SSH 探测未再出现 Host key verification failed"
+        );
+        // 只要错误来自“连接阶段”就说明密钥校验已放行。
+        // 不同网络环境下措辞不同，这里覆盖常见几种。
+        let low = err.to_lowercase();
+        let connection_stage = [
+            "connection refused",
+            "connection timed out",
+            "operation timed out",
+            "network is unreachable",
+            "no route to host",
+            "connection closed",
+            "connection reset",
+            "broken pipe",
+        ]
+        .iter()
+        .any(|k| low.contains(k));
+        check!(
+            connection_stage,
+            "错误来自连接阶段而非密钥校验：{}",
+            err.lines().next().unwrap_or("").trim()
+        );
+        let _ = std::fs::remove_dir_all(&ssh_probe);
+    }
 
     // 清理临时目录
     for d in [&dir, &git_dir, &remote_dir, &peer_dir] {

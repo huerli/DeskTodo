@@ -518,7 +518,11 @@ function syncSettingsUI() {
   el("s-git-email").value = s.sync.author_email ?? "";
   el("s-git-user").value = s.sync.username ?? "";
   el("s-git-token").value = s.sync.token ?? "";
-  el("s-git-ssh").value = s.sync.ssh_key_path ?? "";
+  // 未填私钥时，用文案说明默认走 ~/.ssh/config 的别名与默认密钥
+  el("s-git-ssh").value =
+    s.sync.ssh_key_path && s.sync.ssh_key_path.trim()
+      ? s.sync.ssh_key_path
+      : "ssh 默认配置（~/.ssh/config + 约定密钥）";
   set("s-git-auto", s.sync.auto_commit);
   el("s-git-msg").value = s.sync.commit_message ?? "";
 }
@@ -541,7 +545,8 @@ function collectSettings() {
   s.sync.author_email = el("s-git-email").value.trim();
   s.sync.username = el("s-git-user").value.trim();
   s.sync.token = el("s-git-token").value.trim();
-  s.sync.ssh_key_path = el("s-git-ssh").value.trim();
+  // 提示文案不算私钥路径，避免被误存成 -i 参数
+  s.sync.ssh_key_path = el("s-git-ssh").value.trim().startsWith("ssh ") ? "" : el("s-git-ssh").value.trim();
   s.sync.auto_commit = el("s-git-auto").checked;
   s.sync.commit_message = el("s-git-msg").value.trim() || "desk-todo: 同步待办数据";
   return s;

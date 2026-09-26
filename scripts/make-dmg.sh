@@ -89,10 +89,30 @@ hdiutil create \
   -ov -format UDZO \
   "$DMG_PATH" >/dev/null
 
-echo "==> 校验 DMG 可挂载"
+# 预检：上一次运行若中途失败，可能留下“半挂载”卡住的镜像
+# （卷没挂到 /Volumes，之后所有 hdiutil attach/verify 都会报“资源暂时不可用”）。
+# 这里按设备名把它清掉，避免下次构建莫名其妙失败。
+STUCK_DEV=$(hdiutil info 2>/dev/null | awk -v img="$DMG_PATH" '
+  $1 == "image-path" && index($0, img) { found = 1; next }
+  found && $1 ~ /^\/dev\/disk[0-9]+$/ { print $1; exit }')
+if [ -n "$STUCK_DEV" ]; then
+  echo "  清理上次残留的挂载: $STUCK_DEV"
+  hdiutil detach "$STUCK_DEV" >/dev/null 2>&1 || true
+  sleep 1
+fi
+
+echo "==> 校验 DMG"
+if ! hdiutil verify "$DMG_PATH" >/dev/null 2>&1; then
+  echo "  ✗ DMG 校验失败"
+  echo "    若提示“资源暂时不可用”，执行 hdiutil info 排查卡住的镜像"
+  exit 1
+fi
+echo "  ✓ 校验和有效"
+
+echo "==> 挂载检查内容"
 MOUNT_POINT="$(hdiutil attach "$DMG_PATH" -nobrowse -readonly | tail -1 | awk '{$1="";$2="";print substr($0,3)}')"
 if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
-  echo "挂载失败"; exit 1
+  echo "  ✗ 挂载失败"; exit 1
 fi
 echo "  挂载点: $MOUNT_POINT"
 ls -1 "$MOUNT_POINT" | sed 's/^/    /'
@@ -100,6 +120,9 @@ if [ -x "$MOUNT_POINT/$APP_NAME.app/Contents/MacOS/desk-todo" ]; then
   echo "  ✓ 内含可执行文件"
 else
   echo "  ✗ 可执行文件缺失"; hdiutil detach "$MOUNT_POINT" >/dev/null; exit 1
+fi
+if [ -L "$MOUNT_POINT/应用程序" ]; then
+  echo "  ✓ 含「应用程序」快捷方式 -> $(readlink "$MOUNT_POINT/应用程序")"
 fi
 hdiutil detach "$MOUNT_POINT" >/dev/null
 echo "  已卸载"

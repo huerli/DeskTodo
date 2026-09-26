@@ -189,6 +189,14 @@
             <input type="text" id="s-git-name" placeholder="你的名字" />
             <input type="text" id="s-git-email" placeholder="you@example.com" />
           </div>
+          <p class="note">
+            <b>SSH</b>：留空即使用系统默认配置（读取 <code>~/.ssh/config</code> 与默认密钥），
+            首次连接新主机会自动记录主机密钥。<br />
+            若远程端口不是 22（例如 GitHub 的 22 端口不通、需走 <code>ssh.github.com:443</code>），
+            请先在 <code>~/.ssh/config</code> 里配置别名，然后在「远程地址」里填该别名，例如：<br />
+            <code>Host gh443 / HostName ssh.github.com / Port 443 / User git</code><br />
+            → 远程地址填 <code>gh443:me/todo-data.git</code>
+          </p>
           <p class="note">HTTPS 私有仓库：填用户名 + 访问令牌（Token）；令牌只用于本次会话的凭据助手，不会写入仓库配置。</p>
           <div class="row">
             <span>用户名 / 令牌</span>
@@ -197,7 +205,7 @@
           </div>
           <div class="row">
             <span>SSH 私钥</span>
-            <input type="text" id="s-git-ssh" placeholder="~/.ssh/id_ed25519（可选）" />
+            <input type="text" id="s-git-ssh" placeholder="留空即用 ssh 默认配置" />
           </div>
           <div class="row">
             <span>自动同步</span>

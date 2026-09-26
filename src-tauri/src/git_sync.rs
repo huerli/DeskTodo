@@ -356,15 +356,42 @@ fn stage_all(repo: &git2::Repository) -> Result<(), String> {
     Ok(())
 }
 
+/// 需要排除在版本库之外的运行时文件。
+/// `boot-trace.log` / `frontend.log` 是诊断日志，进版本库只会污染历史。
+const GITIGNORE_PATTERNS: [&str; 5] = [
+    "*.tmp",
+    "*.log",
+    "todos.json.tmp",
+    "backups/",
+    "todos.corrupted-*.json",
+];
+
+/// 幂等地维护 .gitignore：缺失的规则会被追加，已存在的内容不动。
+/// 之前只在文件不存在时创建，导致已有仓库拿不到新增的忽略规则。
 fn write_gitignore(dir: &Path) {
     let path = dir.join(".gitignore");
-    if path.exists() {
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    let missing: Vec<&str> = GITIGNORE_PATTERNS
+        .iter()
+        .copied()
+        .filter(|p| !existing.lines().any(|l| l.trim() == *p))
+        .collect();
+    if missing.is_empty() {
         return;
     }
-    let _ = std::fs::write(
-        &path,
-        "# 由 DeskTodo 自动生成\n*.tmp\n*.log\nbackups/\n",
-    );
+
+    let mut content = existing;
+    if content.is_empty() {
+        content.push_str("# 由 DeskTodo 自动生成：运行时数据不入版本库\n");
+    } else if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    for p in missing {
+        content.push_str(p);
+        content.push('\n');
+    }
+    let _ = std::fs::write(&path, content);
 }
 
 pub fn init_repo(dir: &Path, _settings: &SyncSettings) -> Result<(), String> {
@@ -405,6 +432,36 @@ pub fn git_binary() -> Option<PathBuf> {
 }
 
 /// 执行系统 git 命令；需要令牌时通过 credential helper 注入，不写入仓库配置
+/// 构造 git 使用的 SSH 命令。
+///
+/// 为什么必须显式设置这些选项：
+/// - 应用以 `GIT_TERMINAL_PROMPT=0` 运行（避免卡在交互输入上），
+///   此时 SSH 无法向用户询问“是否信任这台主机”，而 OpenSSH 对未知主机的
+///   默认策略是 `ask` —— 问不了就直接失败并报
+///   `Host key verification failed`。首次使用新主机（如 ssh.github.com）必然踩到。
+/// - `accept-new`：首次遇到的主机密钥自动记录，但**密钥变化时仍然拒绝**，
+///   安全性等同于手动确认首次连接。
+/// - `BatchMode=yes`：绝不进行任何交互，缺凭据时立即失败并返回可读错误。
+/// - `IdentitiesOnly=yes`：只使用指定私钥，避免 agent 里过多密钥导致认证失败。
+pub fn ssh_command(ssh_key_path: &str) -> String {
+    let mut parts = vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+    ];
+    let key = ssh_key_path.trim();
+    if !key.is_empty() {
+        parts.push("-i".to_string());
+        parts.push(key.to_string());
+        parts.push("-o".to_string());
+        parts.push("IdentitiesOnly=yes".to_string());
+    }
+    parts.join(" ")
+}
+
+/// 执行系统 git 命令；需要令牌时通过 credential helper 注入，不写入仓库配置
 fn run_git(dir: &Path, settings: &SyncSettings, args: &[&str]) -> Result<String, String> {
     let git = git_binary().ok_or("未找到系统 git 命令")?;
     let mut cmd = Command::new(git);
@@ -412,7 +469,9 @@ fn run_git(dir: &Path, settings: &SyncSettings, args: &[&str]) -> Result<String,
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
-        .env("LC_ALL", "C");
+        .env("LC_ALL", "C")
+        // 无条件设置：否则首次连接新主机会报 Host key verification failed
+        .env("GIT_SSH_COMMAND", ssh_command(&settings.ssh_key_path));
 
     let token = settings.token.trim();
     let username = if settings.username.trim().is_empty() {
@@ -428,12 +487,6 @@ fn run_git(dir: &Path, settings: &SyncSettings, args: &[&str]) -> Result<String,
         );
         cmd.arg("-c").arg(format!("credential.helper={helper}"));
         cmd.env("DESKTODO_GIT_TOKEN", token);
-    }
-    if !settings.ssh_key_path.trim().is_empty() {
-        cmd.env("GIT_SSH_COMMAND", format!(
-            "ssh -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new",
-            settings.ssh_key_path.trim()
-        ));
     }
 
     let out = cmd
