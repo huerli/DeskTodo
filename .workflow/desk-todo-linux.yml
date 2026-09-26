@@ -11,7 +11,17 @@
 #   ❌ macOS  .dmg        → 见 .github/workflows/build.yml（GitHub Actions）
 #   ❌ Windows .exe/.msi  → 同上
 #
+# ⚠️ 基础镜像风险（务必先看）
+# ------------------------------------------------------------------
+# Tauri **v2** 依赖 webkit2gtk-**4.1**，这个包在 Ubuntu 22.04 才进入官方源；
+# Ubuntu 20.04 / CentOS 8 只有 webkit2gtk-**4.0**，装不上。
+# 若你的 build@gcc 插件跑在 20.04 上，本流水线会在第 0 步就明确报错退出
+# （而不是抛一堆看不懂的 pkg-config 错误）。真遇到就改用容器或自建主机组。
+#
 # 另：Gitee Go 的免费额度为个人每月 500 分钟构建时长。
+#     注意本流水线里的 `cargo install tauri-cli` 需要从源码编译 CLI，
+#     单这一步就可能吃掉十几分钟。额度紧张时建议改用
+#     scripts/build.sh（本机构建）或 GitHub Actions。
 #
 # 语法依据：https://help.gitee.com/gitee-go/pipeline/basic-config
 #           https://help.gitee.com/gitee-go/plugin/ci-build （GCC 构建）
@@ -44,21 +54,70 @@ stages:
           displayName: Rust/Tauri 构建（AppImage + deb）
           gccVersion: 10.3
           commands:
-            # ---------- 1) 系统依赖（Tauri 在 Linux 上的必需库） ----------
+            # ---------- 0) 环境体检 ----------
+            # 先打印基础镜像，日志里可自证；再确认 webkit2gtk-4.1 在源里存在。
+            # 旧镜像（20.04/CentOS 8）没有 4.1，这里直接给出可执行的结论。
+            # 注意：Gitee 的 commands 是 YAML 普通标量，字符串里不能出现「冒号+空格」，
+            # 否则会被当成映射解析导致整个文件语法错误。所以下面统一用 `=` 而不是 `: `。
+            - . /etc/os-release && echo "BASE-IMAGE=$PRETTY_NAME (SELFCHECK-V2)"
             - apt-get update -qq
-            - apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev build-essential curl wget file pkg-config libayatana-appindicator3-dev
-            # ---------- 2) Rust 工具链 ----------
-            - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
-            - sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable
-            - . "$HOME/.cargo/env"
-            # ---------- 3) 自检：无需图形界面，先拦住回归再打包 ----------
-            #   注意：自检用独立临时目录，不会碰用户数据
-            - cd src-tauri && cargo build --release
+            - apt-cache policy libwebkit2gtk-4.1-dev | grep -q 'Candidate:' && echo "✓ 源里有 libwebkit2gtk-4.1-dev" || { echo "✗ 本镜像源里没有 libwebkit2gtk-4.1-dev —— Tauri v2 必需。gcc 插件的基础镜像过旧（需 Ubuntu 22.04+），请改用容器镜像或自建主机组。"; exit 1; }
+
+            # ---------- 1) 系统依赖 ----------
+            # 只装 libayatana-appindicator3-dev；**不要**再装 libappindicator3-dev，
+            # 两者互相 Conflicts（旧版本第 49 行同时装了两个，是这个脚本的已知坑）。
+            # --no-install-recommends 可避免推荐依赖把互斥包拖进来。
+            - apt-get install -y -qq --no-install-recommends build-essential curl wget file pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+            - apt-get install -y -qq --no-install-recommends libxdo-dev
+            - dpkg -s libappindicator3-dev >/dev/null 2>&1 && { echo "✗ 检出互斥包 libappindicator3-dev，与 libayatana-appindicator3-dev 冲突"; exit 1; } || echo "✓ 无互斥包 libappindicator3-dev / libappindicator3-1"
+            - pkg-config --modversion webkit2gtk-4.1 | sed 's/^/  webkit2gtk-4.1 版本= /'
+
+            # ---------- 2) Rust 工具链（走国内镜像）----------
+            # 直连 static.rust-lang.org 在国内会被严重限速（本机实测 6.6 KB/s，
+            # 14MB 的 rustup-init 长时间卡住），所以优先从清华 TUNA 取；
+            # 失败再回落到官方脚本。注意 RUSTUP_DIST_SERVER 同时要传给 rustup-init，
+            # 否则后续 toolchain 仍会走 static.rust-lang.org。
+            - export RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup RUSTUP_UPDATE_ROOT=https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup; curl -sSfL -m 240 https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup/dist/x86_64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init && chmod +x /tmp/rustup-init && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain stable || { curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable; }
+            - export PATH="$HOME/.cargo/bin:$PATH"; rustc --version && cargo --version
+
+            # ---------- 3) 预热 AppImage 打包工具（关键）----------
+            # `tauri build --bundles appimage` 会去 GitHub Releases 下载 linuxdeploy
+            # 等 5 个文件。本机实测 github.com 直连 **30 秒 0 字节**，正常流程必然卡死。
+            # Tauri 打包器在文件已存在时会跳过下载，所以这里用 gh-proxy 镜像提前放好。
+            #
+            # 命名必须与 tauri-bundler 的期望完全一致，其中 linuxdeploy-plugin-appimage
+            # 在**本地**叫 `linuxdeploy-plugin-appimage.AppImage`（不带架构后缀），
+            # 而下载 URL 里才带 `-x86_64` —— 写错会继续傻等 GitHub。
+            - mkdir -p "$HOME/.cache/tauri"
+            - curl -sSfL --retry 2 -m 300 -o "$HOME/.cache/tauri/AppRun-x86_64" "https://gh-proxy.com/https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64"
+            - curl -sSfL --retry 2 -m 600 -o "$HOME/.cache/tauri/linuxdeploy-x86_64.AppImage" "https://gh-proxy.com/https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage"
+            - curl -sSfL --retry 2 -m 600 -o "$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage" "https://gh-proxy.com/https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage"
+            - curl -sSfL --retry 2 -m 300 -o "$HOME/.cache/tauri/linuxdeploy-plugin-gtk.sh" "https://gh-proxy.com/https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
+            - curl -sSfL --retry 2 -m 300 -o "$HOME/.cache/tauri/linuxdeploy-plugin-gstreamer.sh" "https://gh-proxy.com/https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh"
+            - chmod +x "$HOME"/.cache/tauri/* && ls -lh "$HOME/.cache/tauri"
+
+            # ---------- 4) 自检：无需图形界面，先拦住回归再打包 ----------
+            #   注意：自检使用独立临时目录，不会碰用户数据。
+            #   这里带上 --features custom-protocol，与第 5 步打包用的是同一套
+            #   feature 组合，两次构建才能命中同一份缓存；否则 tauri/tauri-plugin-*
+            #   会被判定成另一套组合而全部重编。
+            - export PATH="$HOME/.cargo/bin:$PATH"; cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol
             - ./src-tauri/target/release/desk-todo --self-test
-            # ---------- 4) 打包 ----------
-            - cargo install tauri-cli --version "^2.0" --locked
-            - cd src-tauri && cargo tauri build --bundles appimage,deb
-            # ---------- 5) 整理产物到统一目录 ----------
+
+            # ---------- 5) 打包 ----------
+            # CI=true：tauri CLI 的 --ci 参数只接受 true/false，若环境变量 CI=1
+            #   会被 clap 直接拒绝（本机实测报 `invalid value '1' for '--ci'`）。
+            # TAURI_BUNDLER_TOOLS_GITHUB_MIRROR：兜底，让打包器其余的 github.com
+            #   下载也走镜像（它只镜像 github.com，不覆盖 raw.githubusercontent.com，
+            #   所以上面第 3 步的预热仍然必要）。
+            - export PATH="$HOME/.cargo/bin:$PATH" CI=true TAURI_BUNDLER_TOOLS_GITHUB_MIRROR=https://gh-proxy.com; cargo install tauri-cli --version "^2.0" --locked
+            # 从仓库根目录执行，避免依赖上一条命令的 cwd（Gitee 各条命令是否共享
+            # shell 并无明确保证，写死相对根目录最稳）。Tauri CLI 会自动找到
+            # src-tauri/tauri.conf.json。AppImage 打包器自带 --appimage-extract-and-run，
+            # 所以基础镜像没有 FUSE/libfuse2 也不影响。
+            - export PATH="$HOME/.cargo/bin:$PATH" CI=true TAURI_BUNDLER_TOOLS_GITHUB_MIRROR=https://gh-proxy.com; cargo tauri build --bundles appimage,deb
+
+            # ---------- 6) 整理产物到统一目录 ----------
             - mkdir -p ./output
             - find ./src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} ./output/ \;
             - find ./src-tauri/target/release/bundle -name "*.deb" -exec cp {} ./output/ \;
@@ -92,5 +151,6 @@ stages:
           dependArtifact: desk-todo-linux
           artifactRepository: release
           # 版本号会自增第 4 位，并对当前提交打上 v<版本号> 标签
-          version: '0.1.0.0'
+          # 已随应用版本同步到 0.1.1（原为 0.1.0.0，会把 0.1.1 的产物标成 0.1.0 发布）
+          version: '0.1.1.0'
           autoIncrement: true
