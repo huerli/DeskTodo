@@ -1,6 +1,6 @@
 [package]
 name = "desk-todo"
-version = "0.1.0"
+version = "0.1.1"
 description = "常驻桌面的待办事项小窗"
 authors = ["desk-todo"]
 edition = "2021"

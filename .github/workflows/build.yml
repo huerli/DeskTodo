@@ -22,7 +22,20 @@ jobs:
             args: "--target x86_64-apple-darwin --bundles app,dmg"
             rust-targets: "x86_64-apple-darwin"
             name: macos-x64
-          - platform: ubuntu-22.04
+          # ---------------------------------------------------------------
+          # Linux runner 用 24.04，不能用 22.04：
+          #   Ubuntu 22.04 镜像自 2025-09-17 起弃用，2026-04-17 起被 GitHub
+          #   完全下线（actions/runner-images#14254）。继续写 ubuntu-22.04
+          #   会在“分配 runner”阶段直接失败，连一个步骤都跑不到。
+          #
+          # 代价（需知悉）：在 24.04 上编译，产物的 glibc 门槛是 2.39，
+          #   即只能在 Ubuntu 24.04+ / Debian 13+ 运行，22.04 装不上。
+          #   官方源里的 webkit2gtk-4.1 在 22.04 和 24.04 都有，所以
+          #   Tauri v2 本身在 24.04 上构建是无障碍的（本机已完整验证）。
+          #   若必须兼容 22.04，把 job 的 container 指定为 ubuntu:22.04，
+          #   在旧镜像里编译（见文末注释）。
+          # ---------------------------------------------------------------
+          - platform: ubuntu-24.04
             args: "--bundles appimage,deb"
             rust-targets: ""
             name: linux-x64
@@ -38,15 +51,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 安装 Linux 系统依赖
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.name == 'linux-x64'
         run: |
           set -euxo pipefail
           sudo apt-get update
           # -------------------- 自证版本：日志里会打印下面这行 --------------------
-          echo "DEPFIX-VERSION=2 (仅 libayatana-appindicator3-dev；若看到 libappindicator3-dev 说明用的是旧版工作流)"
+          echo "DEPFIX-VERSION=3 (ubuntu-24.04；仅 libayatana-appindicator3-dev)"
           # 注意：Tauri v2 用 libayatana-appindicator3-dev。
-          # 不要同时装 libappindicator3-dev —— Ubuntu 22.04 上两者互相 Conflicts。
+          # 不要同时装 libappindicator3-dev —— 两者互相 Conflicts。
           # --no-install-recommends：避免推荐依赖把互斥包拖进来。
+          # 这套清单已在 Ubuntu 24.04.5 上完整验证过（webkit2gtk-4.1 = 2.52.6）。
           # 先装基础依赖，libxdo-dev 单独装，便于出问题时定位到具体是哪个包。
           sudo apt-get install -y --no-install-recommends \
             build-essential \
@@ -60,7 +74,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends libxdo-dev
 
       - name: 确认 Linux 依赖已装上
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.name == 'linux-x64'
         run: |
           set -e
           # 互斥包检查：这两个绝不能同时存在
@@ -82,7 +96,7 @@ jobs:
           pkg-config --modversion webkit2gtk-4.1 | sed 's/^/  webkit2gtk-4.1 版本: /'
 
       - name: 诊断（仅在依赖步骤失败时输出）— 谁拉进了冲突包
-        if: failure() && matrix.platform == 'ubuntu-22.04'
+        if: failure() && matrix.name == 'linux-x64'
         run: |
           echo "=== 谁依赖/推荐 libappindicator3-dev ==="
           apt-cache rdepends --installed libappindicator3-dev 2>/dev/null || true
@@ -115,21 +129,60 @@ jobs:
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
-      # 前端是纯静态文件（src/），无需构建步骤；但先在打包前跑一遍自检，拦住回归
+      # 前端是纯静态文件（src/），无需构建步骤；但先在打包前跑一遍自检，拦住回归。
+      #
+      # 这里刻意带上 --features custom-protocol：下面的 tauri-action 打包时用的是
+      # **同一个 feature 组合**，带上它两次构建才能命中同一份编译缓存。
+      # 不带的话（旧版写法）cargo 会把 custom-protocol 视为另一套 feature 组合，
+      # 于是 tauri / tauri-plugin-* 全家桶 + 最终链接全部重编一遍，CI 时间翻倍。
+      # 本机实测：带 feature 时打包阶段 0 次重编，不带时要重编 tauri 全家桶。
       - name: 编译并自检
         run: |
-          cargo build --release --manifest-path src-tauri/Cargo.toml
-          cargo run --release --manifest-path src-tauri/Cargo.toml -- --self-test
+          cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol
+          cargo run --release --manifest-path src-tauri/Cargo.toml --features custom-protocol -- --self-test
         shell: bash
 
+      # tagName 必须显式判空：手动触发（workflow_dispatch）时 github.ref_name
+      # 是分支名（如 main），直接传进去 tauri-action 会去建一个叫 “main” 的
+      # Release —— 既不是发版意图，也会因为 tag 与 app 版本号对不上而报错。
+      # 另外 tauri-action 要求 tag 去掉 v 后与 tauri.conf.json 的 version 一致。
       - name: 构建并打包
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "DeskTodo ${{ github.ref_name }}"
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('DeskTodo {0}', github.ref_name) || '' }}
           releaseBody: "常驻桌面的待办小窗。下载对应平台安装包即可使用。"
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # 手动触发没有 Release，产物只在 runner 上，跑完就没了。
+      # 这一步保证任何一次运行都能从 Actions 页面直接下载安装包。
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskTodo-${{ matrix.name }}
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+
+# =============================================================================
+# 附：若要同时保住 Ubuntu 22.04 的运行兼容性
+# =============================================================================
+# runner 必须是 24.04（22.04 已下线），但可以让“编译”发生在 22.04 容器里，
+# 这样产物仍然只要求 glibc 2.35。做法是在 job 上加：
+#
+#   container:
+#     image: ubuntu:22.04
+#
+# 之后所有步骤（含 checkout / rust / node）都在容器内执行，需要额外注意：
+#   - 容器里没有 sudo，上面的 `sudo apt-get` 要改成 `apt-get`
+#   - 容器里没有 curl/git，需要先装：apt-get update && apt-get install -y git curl
+#   - 容器内构建的 AppImage 同样不需要 FUSE（打包器用 --appimage-extract-and-run）
+# 本仓库当前选择直接用 24.04 原生构建，换取 workflow 的简洁。
