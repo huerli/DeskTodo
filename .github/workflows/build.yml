@@ -1,5 +1,6 @@
 name: build
 
+# 触发条件：推送 v* 标签，或在 Actions 页面手动点 “Run workflow”
 on:
   push:
     tags: ["v*"]
@@ -8,22 +9,26 @@ on:
 jobs:
   build:
     permissions:
-      contents: write
+      contents: write # 创建 Release 需要
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest # Apple Silicon
             args: "--target aarch64-apple-darwin --bundles app,dmg"
+            rust-targets: "aarch64-apple-darwin"
             name: macos-arm64
-          - platform: macos-latest # Intel
+          - platform: macos-latest # Intel（在 ARM runner 上交叉编译）
             args: "--target x86_64-apple-darwin --bundles app,dmg"
+            rust-targets: "x86_64-apple-darwin"
             name: macos-x64
           - platform: ubuntu-22.04
             args: "--bundles appimage,deb"
+            rust-targets: ""
             name: linux-x64
           - platform: windows-latest
             args: "--bundles nsis,msi"
+            rust-targets: ""
             name: windows-x64
 
     runs-on: ${{ matrix.platform }}
@@ -48,7 +53,7 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ contains(matrix.args, 'aarch64-apple-darwin') && 'aarch64-apple-darwin' || contains(matrix.args, 'x86_64-apple-darwin') && 'x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust-targets }}
 
       - name: 缓存 Rust 构建
         uses: swatinem/rust-cache@v2
@@ -69,7 +74,13 @@ jobs:
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
-      # 前端是纯静态文件（src/），无需构建步骤
+      # 前端是纯静态文件（src/），无需构建步骤；但先在打包前跑一遍自检，拦住回归
+      - name: 编译并自检
+        run: |
+          cargo build --release --manifest-path src-tauri/Cargo.toml
+          cargo run --release --manifest-path src-tauri/Cargo.toml -- --self-test
+        shell: bash
+
       - name: 构建并打包
         uses: tauri-apps/tauri-action@v0
         env:
