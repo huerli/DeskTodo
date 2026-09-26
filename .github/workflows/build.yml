@@ -40,24 +40,38 @@ jobs:
       - name: 安装 Linux 系统依赖
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          set -euxo pipefail
           sudo apt-get update
+          # -------------------- 自证版本：日志里会打印下面这行 --------------------
+          echo "DEPFIX-VERSION=2 (仅 libayatana-appindicator3-dev；若看到 libappindicator3-dev 说明用的是旧版工作流)"
           # 注意：Tauri v2 用 libayatana-appindicator3-dev。
-          # 不要同时装 libappindicator3-dev —— Ubuntu 22.04 上两者互相 Conflicts，
-          # 一起装会直接报 "held broken packages" 并让整个 job 失败。
-          sudo apt-get install -y \
+          # 不要同时装 libappindicator3-dev —— Ubuntu 22.04 上两者互相 Conflicts。
+          # --no-install-recommends：避免推荐依赖把互斥包拖进来。
+          # 先装基础依赖，libxdo-dev 单独装，便于出问题时定位到具体是哪个包。
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            curl wget file pkg-config \
+            libssl-dev \
+            libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            build-essential \
-            curl wget file libxdo-dev
+            patchelf
+          sudo apt-get install -y --no-install-recommends libxdo-dev
 
       - name: 确认 Linux 依赖已装上
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           set -e
-          for pkg in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf; do
+          # 互斥包检查：这两个绝不能同时存在
+          for pkg in libappindicator3-dev libappindicator3-1; do
+            if dpkg -s "$pkg" >/dev/null 2>&1; then
+              echo "  ✗ 检测到互斥包 $pkg，与 libayatana-appindicator3-dev 冲突"
+              exit 1
+            fi
+          done
+          echo "  ✓ 未安装互斥的 libappindicator3-dev / libappindicator3-1"
+          for pkg in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev; do
             if dpkg -s "$pkg" >/dev/null 2>&1; then
               echo "  ✓ $pkg"
             else
@@ -66,6 +80,16 @@ jobs:
             fi
           done
           pkg-config --modversion webkit2gtk-4.1 | sed 's/^/  webkit2gtk-4.1 版本: /'
+
+      - name: 诊断（仅在依赖步骤失败时输出）— 谁拉进了冲突包
+        if: failure() && matrix.platform == 'ubuntu-22.04'
+        run: |
+          echo "=== 谁依赖/推荐 libappindicator3-dev ==="
+          apt-cache rdepends --installed libappindicator3-dev 2>/dev/null || true
+          echo "=== 谁依赖 libappindicator3-1 ==="
+          apt-cache rdepends --installed libappindicator3-1 2>/dev/null || true
+          echo "=== 已安装的 appindicator 相关包 ==="
+          dpkg -l | grep -i appindicator || echo "(无)"
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
