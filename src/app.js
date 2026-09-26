@@ -598,99 +598,22 @@ async function reload() {
   render();
 }
 
-/* ---------------------------------------------------------- 窗口拖动 / 排序 */
+/* ---------------------------------------------------------- 拖动 / 排序 */
 
 function installPointerDrag() {
-  // ---- 标题栏拖动窗口 ----
-  // 关键点（修复拖动闪烁）：
-  //  1) 用「起点物理坐标 + 本次拖拽累计位移」算绝对目标位置，绝对定位是幂等的，
-  //     即使漏掉几帧也不会像增量那样在旧位置上反复叠加而抖动；
-  //  2) 每帧只发一次请求，且同一时刻只允许一个在途请求，避免请求堆积；
-  //  3) 位置持久化由 Rust 侧的窗口事件 + 延迟写盘完成，前端不碰磁盘。
-  let winDrag = null;
-  const titlebar = $.titlebar;
-
-  titlebar.addEventListener("pointerdown", async (e) => {
-    if (e.button !== 0) return;
-    if (e.target.closest("button")) return; // 点按钮不拖动
-    let origin = null;
-    let scale = 1;
-    try {
-      origin = await invoke("window_position");
-      scale = await invoke("window_scale");
-    } catch {}
-    if (!origin) return;
-    winDrag = {
-      originX: origin[0],
-      originY: origin[1],
-      scale: scale || 1,
-      startX: e.clientX,
-      startY: e.clientY,
-      dirty: false,
-      inFlight: false,
-      raf: 0,
-      moved: false,
-    };
-    try {
-      titlebar.setPointerCapture(e.pointerId);
-    } catch {}
-    document.body.style.cursor = "grabbing";
-  });
-
-  titlebar.addEventListener("pointermove", (e) => {
-    if (!winDrag) return;
-    winDrag.dirty = true;
-    if (Math.abs(e.clientX - winDrag.startX) + Math.abs(e.clientY - winDrag.startY) > 1) {
-      winDrag.moved = true;
-    }
-    // 记录本次指针位置，供下一帧使用（合并同一帧内的多次 pointermove）
-    winDrag.curX = e.clientX;
-    winDrag.curY = e.clientY;
-    scheduleWindowMove();
-  });
-
-  const endWinDrag = (e) => {
-    if (!winDrag) return;
-    const moved = winDrag.moved;
-    cancelAnimationFrame(winDrag.raf);
-    winDrag = null;
-    document.body.style.cursor = "";
-    try {
-      titlebar.releasePointerCapture(e.pointerId);
-    } catch {}
-    // 位置已由后端记忆；若拖动过则主动补一次，避免极端情况下延迟任务被跳过
-    if (moved) persistWindowState().catch(() => {});
-  };
-  titlebar.addEventListener("pointerup", endWinDrag);
-  titlebar.addEventListener("pointercancel", endWinDrag);
-
-  function scheduleWindowMove() {
-    if (!winDrag || winDrag.raf || winDrag.inFlight) return;
-    winDrag.raf = requestAnimationFrame(async () => {
-      const drag = winDrag;
-      if (!drag) return;
-      drag.raf = 0;
-      if (!drag.dirty) return;
-      drag.dirty = false;
-
-      const cssDx = (drag.curX ?? drag.startX) - drag.startX;
-      const cssDy = (drag.curY ?? drag.startY) - drag.startY;
-      const x = Math.round(drag.originX + cssDx * drag.scale);
-      const y = Math.round(drag.originY + cssDy * drag.scale);
-
-      drag.inFlight = true;
-      try {
-        await invoke("move_window_to", { x, y });
-      } catch {
-      } finally {
-        if (winDrag === drag) {
-          drag.inFlight = false;
-          // 若期间又有移动，补一帧
-          if (drag.dirty) scheduleWindowMove();
-        }
-      }
-    });
-  }
+  // ---- 标题栏拖动窗口：交给系统原生实现 ----
+  // 标题栏带 data-tauri-drag-region="deep"，Tauri 内部的 drag.js 会在 mousedown 时
+  // 调用 start_dragging，由窗口服务器直接接管拖动。相比自研的
+  // pointermove → IPC → set_position 方案，省掉了每帧一次 IPC 往返与渲染同步，
+  // 拖动跟手且不会抖动。
+  //
+  // 之前自研方案的问题：即使把 IPC 耗时压到 0.03ms，窗口位置仍要经过
+  // 「JS 事件 → IPC → Rust → 窗口服务器 → 合成器」整条链路，
+  // 与鼠标指针之间存在固有延迟，看起来就是"卡"。
+  //
+  // 注意：不要再给标题栏加 pointerdown/move/up 处理器，否则会与原生拖动冲突。
+  // 位置变化由 Rust 侧的窗口事件监听 + 定时线程负责落盘，前端不碰磁盘。
+  // 双击标题栏的"最大化/还原"由 Tauri 内部 drag.js 处理，这里无需干预。
 
   // ---- 列表项拖动排序 ----
   $.list.addEventListener("pointerdown", (e) => {
@@ -764,25 +687,11 @@ function installPointerDrag() {
     grip.addEventListener("pointercancel", onUp);
   });
 
-  // ---- 窗口尺寸变化后记忆 ----
-  let resizeTimer = null;
-  window.addEventListener("resize", () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(persistWindowState, 500);
-  });
-}
-
-async function persistWindowState() {
-  // 收起状态下不写尺寸，避免把收起高度当成展开高度记住
-  const collapsed = data?.settings?.window?.collapsed ?? false;
-  try {
-    await invoke("save_window_state", {
-      x: null,
-      y: null,
-      width: collapsed ? null : window.innerWidth,
-      height: collapsed ? null : window.innerHeight,
-    });
-  } catch {}
+  // 窗口位置与尺寸的持久化全部由 Rust 侧负责：
+  //   - 窗口事件监听记录几何到内存
+  //   - 定时线程每 30 秒落盘一次（拖动/缩放期间零 IO）
+  //   - 退出前兜底写一次
+  // 前端不再参与，避免在拖动过程中触发写盘。
 }
 
 /* ---------------------------------------------------------- 提醒 / 语音 */

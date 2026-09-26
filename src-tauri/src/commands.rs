@@ -334,74 +334,7 @@ pub fn set_collapsed(app: AppHandle, collapsed: bool) -> Result<AppData, String>
     Ok(data)
 }
 
-/// 读取窗口当前物理位置（前端拖动开始时调用，作为绝对定位基准）
-#[tauri::command]
-pub fn window_position(app: AppHandle) -> Result<(i32, i32), String> {
-    let win = app
-        .get_webview_window("main")
-        .ok_or_else(|| "窗口不存在".to_string())?;
-    let pos = win.outer_position().map_err(|e| e.to_string())?;
-    Ok((pos.x, pos.y))
-}
-
-/// 读取窗口缩放因子，供前端把 CSS 像素换算成物理像素
-#[tauri::command]
-pub fn window_scale(app: AppHandle) -> f64 {
-    app.get_webview_window("main")
-        .and_then(|w| w.scale_factor().ok())
-        .unwrap_or(1.0)
-}
-
-/// 拖动窗口到绝对物理坐标。
-///
-/// 为什么用绝对值而不是增量：增量依赖“当前位置”，而位置更新是异步的，
-/// 高频调用时会在旧位置上反复叠加，造成窗口来回跳动（肉眼即闪烁）。
-/// 绝对坐标是幂等的，中间漏掉几帧也不会累积误差。
-/// 注意：这里不落盘，几何信息的持久化由窗口事件 + 延迟写盘负责。
-#[tauri::command]
-pub fn move_window_to(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
-    let win = app
-        .get_webview_window("main")
-        .ok_or_else(|| "窗口不存在".to_string())?;
-    win.set_position(tauri::PhysicalPosition::new(x, y))
-        .map_err(|e| e.to_string())
-}
-
-/// 前端解析好目标位置后一次性写入（避免累积误差）
-#[tauri::command]
-pub fn save_window_state(
-    app: AppHandle,
-    x: Option<i32>,
-    y: Option<i32>,
-    width: Option<f64>,
-    height: Option<f64>,
-) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let (data, changed) = {
-        let mut d = state.data.lock().unwrap();
-        let mut changed = false;
-        if let (Some(x), Some(y)) = (x, y) {
-            if d.settings.window.position != Some((x, y)) {
-                d.settings.window.position = Some((x, y));
-                changed = true;
-            }
-        }
-        // 收起状态下的高度不写入，避免覆盖展开高度的记忆值
-        if let (Some(w), Some(h)) = (width, height) {
-            if h >= crate::model::MIN_EXPANDED_HEIGHT && d.settings.window.size != Some((w, h)) {
-                d.settings.window.size = Some((w, h));
-                changed = true;
-            }
-        }
-        (d.clone(), changed)
-    };
-    // 没有任何变化时不写盘，避免无意义 IO 与误触发 git 自动提交
-    if !changed {
-        return Ok(());
-    }
-    persist(&app, &data)
-}
-
+/// 隐藏窗口到托盘（关闭按钮与标题栏的「–」都走这里）
 #[tauri::command]
 pub fn hide_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
@@ -410,6 +343,7 @@ pub fn hide_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 显示并聚焦窗口（托盘菜单与快捷键使用）
 #[tauri::command]
 pub fn show_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {

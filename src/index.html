@@ -8,9 +8,13 @@
 </head>
 <body>
   <div id="widget" class="widget">
-    <!-- ==================== 标题栏（拖动区） ==================== -->
-    <header class="titlebar" id="titlebar">
-      <button class="icon-btn collapse-btn" id="btn-collapse" title="收起 / 展开 (⌘/Ctrl+Shift+H)">
+    <!-- ==================== 标题栏（原生拖动区） ====================
+         data-tauri-drag-region="deep"：由 Tauri 交给操作系统做原生窗口拖动，
+         由窗口服务器直接处理，不存在 IPC 往返，因此跟手无延迟。
+         自研的 pointermove + set_position 方案每帧都要走一次 IPC，
+         原理上就必然滞后发涩（实测 P95 0.03ms 只是 IPC 本身，不含渲染同步开销）。 -->
+    <header class="titlebar" id="titlebar" data-tauri-drag-region="deep">
+      <button class="icon-btn collapse-btn" id="btn-collapse" title="收起 / 展开">
         <svg viewBox="0 0 24 24" class="ico"><path d="M6 9l6 6 6-6" /></svg>
       </button>
       <div class="title" id="title-text">待办</div>
