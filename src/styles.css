@@ -220,14 +220,23 @@ body {
 .summary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px 4px;
-  font-size: 11.5px;
+  gap: 6px;
+  padding: 7px 9px 5px;
+  font-size: 11px;
   color: rgb(var(--fg-dim));
+  white-space: nowrap;
+}
+
+/* 摘要文字优先截断，保证筛选按钮不被挤压换行 */
+.summary > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .summary .seg {
-  margin-left: auto;
+  flex: none;
   display: flex;
   background: rgb(var(--line) / 0.07);
   border-radius: 7px;
@@ -238,10 +247,12 @@ body {
   border: 0;
   background: transparent;
   color: rgb(var(--fg-dim));
-  font-size: 11px;
-  padding: 2px 7px;
+  font-size: 10.5px;
+  padding: 2px 6px;
   border-radius: 5px;
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 
 .seg-btn.active {
@@ -478,20 +489,30 @@ body {
   font-size: 11px;
 }
 
-/* ---------------------------------------------------------- 新增行 */
+/* ---------------------------------------------------------- 新增区 */
+
+.add-box {
+  border-top: 1px solid rgb(var(--line) / 0.07);
+  background: rgb(var(--line) / 0.02);
+  padding: 7px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
 .add-row {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 8px;
-  border-top: 1px solid rgb(var(--line) / 0.07);
-  background: rgb(var(--line) / 0.02);
+  gap: 6px;
 }
 
 .add-row input[type="text"] {
   flex: 1;
   min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  font-size: 13px;
+  border-radius: 9px;
 }
 
 input[type="text"],
@@ -517,10 +538,67 @@ select:focus {
   background: rgb(var(--bg-elev));
 }
 
+/* 时间字段：图标 + datetime-local，整体做成一个胶囊 */
+.time-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid rgb(var(--line) / 0.1);
+  border-radius: 7px;
+  background: rgb(var(--bg-elev) / 0.5);
+  color: rgb(var(--fg-dim));
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.time-field:hover {
+  border-color: rgb(var(--line) / 0.28);
+  color: rgb(var(--fg));
+}
+
+.time-field:focus-within {
+  border-color: rgb(var(--accent) / 0.75);
+  color: rgb(var(--accent));
+}
+
+.time-field.has-value {
+  color: rgb(var(--accent));
+  border-color: rgb(var(--accent) / 0.5);
+  background: rgb(var(--accent) / 0.08);
+}
+
+.time-field .ico {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
 input[type="datetime-local"] {
-  width: 158px;
+  width: 148px;
+  height: 22px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
   flex: none;
   color-scheme: dark;
+}
+
+input[type="datetime-local"]:focus {
+  background: transparent;
+}
+
+.clear-time {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.clear-time .ico {
+  width: 11px;
+  height: 11px;
 }
 
 html[data-theme="light"] input[type="datetime-local"] {
@@ -564,15 +642,22 @@ input::placeholder {
 .add-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px 7px;
+  gap: 5px;
   font-size: 11px;
   color: rgb(var(--fg-dim));
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 1px;
+}
+
+.add-meta::-webkit-scrollbar {
+  display: none;
 }
 
 .prio-group {
   display: flex;
   gap: 3px;
+  flex: none;
 }
 
 .chip {
@@ -580,20 +665,17 @@ input::placeholder {
   background: transparent;
   color: rgb(var(--fg-dim));
   font-size: 10.5px;
-  padding: 1px 7px;
+  padding: 1px 8px;
   border-radius: 6px;
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 
 .chip.active {
   border-color: rgb(var(--accent) / 0.7);
   background: rgb(var(--accent) / 0.16);
   color: rgb(var(--accent));
-}
-
-.hint {
-  margin-left: auto;
-  opacity: 0.85;
 }
 
 /* ---------------------------------------------------------- 设置面板 */

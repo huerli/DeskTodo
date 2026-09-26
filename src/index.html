@@ -57,20 +57,30 @@
       </div>
 
       <!-- ==================== 新增 ==================== -->
-      <div class="add-row" id="add-row">
-        <input type="text" id="input-title" placeholder="添加待办，回车保存…" autocomplete="off" />
-        <input type="datetime-local" id="input-due" title="到期时间（可选）" />
-        <button class="primary-btn" id="btn-add" title="添加">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14" /></svg>
-        </button>
-      </div>
-      <div class="add-meta" id="add-meta">
-        <div class="prio-group" id="prio-group">
-          <button class="chip" data-prio="low">低</button>
-          <button class="chip active" data-prio="normal">普通</button>
-          <button class="chip" data-prio="high">高</button>
+      <div class="add-box">
+        <div class="add-row">
+          <input type="text" id="input-title" placeholder="添加待办…" autocomplete="off" />
+          <button class="primary-btn" id="btn-add" title="添加（回车）">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
         </div>
-        <span class="hint" id="add-hint"></span>
+        <div class="add-meta">
+          <label class="time-field" id="time-field" title="到期时间（可选）">
+            <svg viewBox="0 0 24 24" class="ico">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+            <input type="datetime-local" id="input-due" />
+          </label>
+          <button class="icon-btn clear-time hidden" id="btn-clear-time" title="清除到期时间">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <div class="prio-group" id="prio-group">
+            <button class="chip" data-prio="low">低</button>
+            <button class="chip active" data-prio="normal">普通</button>
+            <button class="chip" data-prio="high">高</button>
+          </div>
+        </div>
       </div>
     </main>
 

@@ -105,8 +105,6 @@ const $ = {
   emptySub: el("empty-sub"),
   inputTitle: el("input-title"),
   inputDue: el("input-due"),
-  addMeta: el("add-meta"),
-  addHint: el("add-hint"),
   prioGroup: el("prio-group"),
   settings: el("settings"),
   toast: el("toast"),
@@ -567,6 +565,13 @@ function debounce(fn, ms) {
 }
 const saveSettingsSoon = debounce(() => saveSettings(false).catch(() => {}), 400);
 
+/** 时间胶囊的选中态与清除按钮显隐 */
+function syncTimeField() {
+  const has = !!$.inputDue.value;
+  el("time-field").classList.toggle("has-value", has);
+  el("btn-clear-time").classList.toggle("hidden", !has);
+}
+
 /* ---------------------------------------------------------- 命令包装 */
 
 async function run(fn) {
@@ -831,6 +836,7 @@ function installEvents() {
     if (ok) {
       $.inputTitle.value = "";
       $.inputDue.value = "";
+      syncTimeField();
       $.inputTitle.focus();
     }
   };
@@ -841,12 +847,29 @@ function installEvents() {
   $.inputDue.addEventListener("keydown", (e) => {
     if (e.key === "Enter") add();
   });
+  $.inputDue.addEventListener("change", syncTimeField);
+  $.inputDue.addEventListener("input", syncTimeField);
+  el("btn-clear-time").addEventListener("click", (e) => {
+    e.preventDefault();
+    $.inputDue.value = "";
+    syncTimeField();
+    $.inputTitle.focus();
+  });
+  // 点胶囊任意处都能唤起系统时间选择器
+  el("time-field").addEventListener("click", (e) => {
+    if (e.target === $.inputDue) return;
+    try {
+      $.inputDue.showPicker?.();
+    } catch {}
+    $.inputDue.focus();
+  });
   $.prioGroup.addEventListener("click", (e) => {
     const c = e.target.closest(".chip");
     if (!c) return;
     newPriority = c.dataset.prio;
     $.prioGroup.querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === c));
   });
+  syncTimeField();
 
   // 设置项即时保存
   for (const id of ["s-reminder-enabled", "s-lead", "s-sound", "s-voice", "s-on-top", "s-theme", "s-start-hidden", "s-sort", "s-git-auto", "s-git-msg", "s-git-url", "s-git-remote", "s-git-branch", "s-git-name", "s-git-email", "s-git-user", "s-git-token", "s-git-ssh"]) {
