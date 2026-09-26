@@ -602,51 +602,93 @@ async function reload() {
 
 function installPointerDrag() {
   // ---- 标题栏拖动窗口 ----
+  // 关键点（修复拖动闪烁）：
+  //  1) 用「起点物理坐标 + 本次拖拽累计位移」算绝对目标位置，绝对定位是幂等的，
+  //     即使漏掉几帧也不会像增量那样在旧位置上反复叠加而抖动；
+  //  2) 每帧只发一次请求，且同一时刻只允许一个在途请求，避免请求堆积；
+  //  3) 位置持久化由 Rust 侧的窗口事件 + 延迟写盘完成，前端不碰磁盘。
   let winDrag = null;
   const titlebar = $.titlebar;
 
-  titlebar.addEventListener("pointerdown", (e) => {
+  titlebar.addEventListener("pointerdown", async (e) => {
     if (e.button !== 0) return;
     if (e.target.closest("button")) return; // 点按钮不拖动
-    winDrag = { lastX: e.clientX, lastY: e.clientY, dx: 0, dy: 0, raf: 0 };
-    titlebar.setPointerCapture(e.pointerId);
+    let origin = null;
+    let scale = 1;
+    try {
+      origin = await invoke("window_position");
+      scale = await invoke("window_scale");
+    } catch {}
+    if (!origin) return;
+    winDrag = {
+      originX: origin[0],
+      originY: origin[1],
+      scale: scale || 1,
+      startX: e.clientX,
+      startY: e.clientY,
+      dirty: false,
+      inFlight: false,
+      raf: 0,
+      moved: false,
+    };
+    try {
+      titlebar.setPointerCapture(e.pointerId);
+    } catch {}
     document.body.style.cursor = "grabbing";
   });
 
   titlebar.addEventListener("pointermove", (e) => {
     if (!winDrag) return;
-    winDrag.dx += e.clientX - winDrag.lastX;
-    winDrag.dy += e.clientY - winDrag.lastY;
-    winDrag.lastX = e.clientX;
-    winDrag.lastY = e.clientY;
+    winDrag.dirty = true;
+    if (Math.abs(e.clientX - winDrag.startX) + Math.abs(e.clientY - winDrag.startY) > 1) {
+      winDrag.moved = true;
+    }
+    // 记录本次指针位置，供下一帧使用（合并同一帧内的多次 pointermove）
+    winDrag.curX = e.clientX;
+    winDrag.curY = e.clientY;
     scheduleWindowMove();
   });
 
-  const endWinDrag = async (e) => {
+  const endWinDrag = (e) => {
     if (!winDrag) return;
-    const moved = Math.abs(winDrag.dx) + Math.abs(winDrag.dy) > 1;
+    const moved = winDrag.moved;
     cancelAnimationFrame(winDrag.raf);
     winDrag = null;
     document.body.style.cursor = "";
     try {
       titlebar.releasePointerCapture(e.pointerId);
     } catch {}
-    if (moved) await persistWindowState();
+    // 位置已由后端记忆；若拖动过则主动补一次，避免极端情况下延迟任务被跳过
+    if (moved) persistWindowState().catch(() => {});
   };
   titlebar.addEventListener("pointerup", endWinDrag);
   titlebar.addEventListener("pointercancel", endWinDrag);
 
-  async function scheduleWindowMove() {
-    if (!winDrag || winDrag.raf) return;
+  function scheduleWindowMove() {
+    if (!winDrag || winDrag.raf || winDrag.inFlight) return;
     winDrag.raf = requestAnimationFrame(async () => {
-      if (!winDrag) return;
-      const { dx, dy } = winDrag;
-      winDrag.dx = 0;
-      winDrag.dy = 0;
-      winDrag.raf = 0;
+      const drag = winDrag;
+      if (!drag) return;
+      drag.raf = 0;
+      if (!drag.dirty) return;
+      drag.dirty = false;
+
+      const cssDx = (drag.curX ?? drag.startX) - drag.startX;
+      const cssDy = (drag.curY ?? drag.startY) - drag.startY;
+      const x = Math.round(drag.originX + cssDx * drag.scale);
+      const y = Math.round(drag.originY + cssDy * drag.scale);
+
+      drag.inFlight = true;
       try {
-        await invoke("move_window", { dx, dy });
-      } catch {}
+        await invoke("move_window_to", { x, y });
+      } catch {
+      } finally {
+        if (winDrag === drag) {
+          drag.inFlight = false;
+          // 若期间又有移动，补一帧
+          if (drag.dirty) scheduleWindowMove();
+        }
+      }
     });
   }
 

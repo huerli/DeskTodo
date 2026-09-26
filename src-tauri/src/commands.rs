@@ -334,17 +334,36 @@ pub fn set_collapsed(app: AppHandle, collapsed: bool) -> Result<AppData, String>
     Ok(data)
 }
 
-/// 拖动窗口：前端在拖拽标题栏时调用
+/// 读取窗口当前物理位置（前端拖动开始时调用，作为绝对定位基准）
 #[tauri::command]
-pub fn move_window(app: AppHandle, dx: f64, dy: f64) -> Result<(), String> {
-    let Some(win) = app.get_webview_window("main") else {
-        return Err("窗口不存在".into());
-    };
+pub fn window_position(app: AppHandle) -> Result<(i32, i32), String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "窗口不存在".to_string())?;
     let pos = win.outer_position().map_err(|e| e.to_string())?;
-    let scale = win.scale_factor().unwrap_or(1.0);
-    let nx = pos.x + (dx * scale).round() as i32;
-    let ny = pos.y + (dy * scale).round() as i32;
-    win.set_position(tauri::PhysicalPosition::new(nx, ny))
+    Ok((pos.x, pos.y))
+}
+
+/// 读取窗口缩放因子，供前端把 CSS 像素换算成物理像素
+#[tauri::command]
+pub fn window_scale(app: AppHandle) -> f64 {
+    app.get_webview_window("main")
+        .and_then(|w| w.scale_factor().ok())
+        .unwrap_or(1.0)
+}
+
+/// 拖动窗口到绝对物理坐标。
+///
+/// 为什么用绝对值而不是增量：增量依赖“当前位置”，而位置更新是异步的，
+/// 高频调用时会在旧位置上反复叠加，造成窗口来回跳动（肉眼即闪烁）。
+/// 绝对坐标是幂等的，中间漏掉几帧也不会累积误差。
+/// 注意：这里不落盘，几何信息的持久化由窗口事件 + 延迟写盘负责。
+#[tauri::command]
+pub fn move_window_to(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "窗口不存在".to_string())?;
+    win.set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())
 }
 
