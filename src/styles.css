@@ -411,6 +411,7 @@ body {
 .item-title {
   display: block;
   width: 100%;
+  /* textarea 默认样式需要显式清掉，才能与列表融为一体 */
   border: 0;
   background: transparent;
   color: inherit;
@@ -418,8 +419,13 @@ body {
   font-size: 13px;
   line-height: 1.35;
   padding: 1px 0;
+  margin: 0;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 

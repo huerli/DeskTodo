@@ -410,12 +410,18 @@ function renderItem(t) {
   const main = document.createElement("div");
   main.className = "item-main";
 
-  const title = document.createElement("input");
+  // 标题用 textarea 而非单行 input：
+  // 单行 input 对超长文本只会横向滚动，用户永远看不全任务内容；
+  // textarea 能自动换行，并按内容自动增高，完整展示。
+  const title = document.createElement("textarea");
   title.className = "item-title";
+  title.rows = 1;
   title.value = t.title;
   title.spellcheck = false;
+  title.addEventListener("input", () => autoGrow(title));
   title.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter") {
+    // 回车保存、Shift+回车换行（换行内容同样完整展示）
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       title.blur();
     } else if (e.key === "Escape") {
@@ -432,6 +438,8 @@ function renderItem(t) {
     if (v !== t.title) await run(() => invoke("update_todo", { payload: { id: t.id, title: v } }));
   });
   main.appendChild(title);
+  // DOM 插入后才知道实际宽度，此时再按内容撑高
+  queueMicrotask(() => autoGrow(title));
 
   // 元信息行
   const metaBits = [];
@@ -464,6 +472,8 @@ function renderItem(t) {
     ta.value = t.notes ?? "";
     ta.placeholder = "记录处理过程、进展、结论…（自动保存）";
     ta.spellcheck = false;
+    ta.addEventListener("input", () => autoGrow(ta));
+    queueMicrotask(() => autoGrow(ta));
 
     const hint = document.createElement("div");
     hint.className = "note-hint";
@@ -592,6 +602,23 @@ function renderItem(t) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/**
+ * 让 textarea 高度贴合内容，完整展示文本而不出现内部滚动条。
+ * 做法：先归零再读取 scrollHeight —— 否则内容变短时高度不会回落。
+ * 上限 MAX 防止极端长文本把整个列表挤没；超过则由外层列表滚动。
+ */
+function autoGrow(el, max = 320) {
+  if (!el || el.tagName !== "TEXTAREA") return;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, max) + "px";
+  el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+}
+
+/** 窗口尺寸变化时，textarea 宽度变了，需要重新按内容撑高 */
+function regrowAll() {
+  document.querySelectorAll("textarea.item-title, .note-editor textarea").forEach((el) => autoGrow(el));
 }
 
 /* ---------------------------------------------------------- 设置面板同步 */
@@ -1217,6 +1244,12 @@ async function boot() {
   applyCollapsed(collapsed);
 
   installPointerDrag();
+  // 窗口宽度变化后 textarea 的换行数会变，需要重新撑高以保证文本完整可见
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(regrowAll, 120);
+  });
   installEvents();
   await installBackendEvents();
 
