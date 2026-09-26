@@ -109,8 +109,10 @@ pub struct WindowSettings {
     pub theme: String,
 }
 
-/// 收起时的高度（逻辑像素）
-pub const COLLAPSED_HEIGHT: f64 = 52.0;
+/// 收起时的高度（逻辑像素）。
+/// 必须容纳 titlebar(38px) + 收起摘要条(26px) 加少量留白，
+/// 否则摘要行会被窗口裁掉一半（曾用 52px，导致下半截内容露出）。
+pub const COLLAPSED_HEIGHT: f64 = 68.0;
 /// 小于该高度的尺寸不写入记忆值，避免把收起高度当成展开高度
 pub const MIN_EXPANDED_HEIGHT: f64 = 120.0;
 

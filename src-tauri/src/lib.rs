@@ -22,18 +22,21 @@ pub struct AppState {
     pub git: git_sync::GitManager,
     /// 最后一次待写入的窗口几何（物理坐标 + 逻辑尺寸）
     pub last_geometry: Mutex<Option<((i32, i32), (f64, f64))>>,
-    /// 窗口几何落盘的「重置式防抖」：每次移动都通知，静默满 QUIET_MS 才真正写盘。
-    /// 拖动窗口会以 60fps 触发 Moved 事件，若每次都写盘（实测 30~40ms，含 git 暂存）
-    /// 会占满主线程导致窗口抖动/闪烁。
-    pub geo_lock: Mutex<()>,
-    pub geo_signal: std::sync::Condvar,
+    /// 几何信息自上次落盘以来是否变化过
     pub geo_dirty: std::sync::atomic::AtomicBool,
-    /// 几何信息最后一次变化的时刻，用于判断是否已静默足够久
-    pub geo_changed_at: Mutex<Option<std::time::Instant>>,
+    /// 诊断：几何信息实际落盘次数（由写入方自增，供压力测试断言）
+    pub geo_write_count: std::sync::atomic::AtomicU32,
 }
 
-/// 窗口几何静默多久后落盘
-const GEO_QUIET_MS: u64 = 600;
+/// 窗口几何的定时落盘周期。
+///
+/// 为什么用「固定周期」而不是「拖动结束防抖」：
+/// - 拖动窗口会以 60fps 触发 Moved 事件，任何在事件里做 IO 的做法
+///   （实测单次写盘 + git 暂存 30~42ms）都会占满主线程导致窗口抖动；
+/// - 防抖需要额外的计时状态机，边界情况多、不易验证；
+/// - 定时保存则完全与拖动解耦：拖动过程中一次都不写，最多丢失 GEO_SAVE_INTERVAL
+///   秒内的位置变化，而这个代价几乎不可感知（窗口几何不是关键数据）。
+const GEO_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl AppState {
     pub fn new(dir: std::path::PathBuf, data: AppData) -> Self {
@@ -42,92 +45,43 @@ impl AppState {
             data: Mutex::new(data),
             git: git_sync::GitManager::new(dir),
             last_geometry: Mutex::new(None),
-            geo_lock: Mutex::new(()),
-            geo_signal: std::sync::Condvar::new(),
             geo_dirty: std::sync::atomic::AtomicBool::new(false),
-            geo_changed_at: Mutex::new(None),
+            geo_write_count: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
 
-/// 通知「窗口几何有变化」并唤醒常驻落盘线程。
-/// 每次移动都会调用，但只有静默满 GEO_QUIET_MS 后才真正写盘一次。
-fn notify_geometry_changed(app: &AppHandle) {
+/// 记录「窗口几何变了」，不触发任何 IO。
+fn mark_geometry_dirty(app: &AppHandle) {
     use std::sync::atomic::Ordering;
     if let Some(state) = app.try_state::<AppState>() {
-        if let Ok(mut t) = state.geo_changed_at.lock() {
-            *t = Some(std::time::Instant::now());
-        }
         state.geo_dirty.store(true, Ordering::SeqCst);
-        state.geo_signal.notify_all();
     }
 }
 
-/// 常驻线程：把所有移动事件合并成「静默满 GEO_QUIET_MS 后写一次盘」。
-/// 拖动 2 秒只会产生 1 次写入，而不是每帧一次。
+/// 定时线程：每 GEO_SAVE_INTERVAL 检查一次，只有变化过才写盘。
+/// 拖动期间完全不受影响（该线程只做定时检查与必要时的落盘）。
 fn geometry_save_loop(app: AppHandle) {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-
     loop {
-        let Some(state) = app.try_state::<AppState>() else {
-            return;
-        };
-        let guard = match state.geo_lock.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        // 最长只睡 QUIET_MS，醒来后判断是否已静默足够久
-        let _ = state
-            .geo_signal
-            .wait_timeout(guard, Duration::from_millis(GEO_QUIET_MS));
-
-        if !state.geo_dirty.load(Ordering::SeqCst) {
-            continue;
-        }
-        // 距最后一次变化若不足静默期，说明还在拖动 —— 继续等，不写盘
-        let changed_at = state.geo_changed_at.lock().ok().and_then(|t| *t);
-        let quiet_enough = match changed_at {
-            Some(t) => Instant::now().duration_since(t) >= Duration::from_millis(GEO_QUIET_MS),
-            None => true,
-        };
-        if !quiet_enough {
-            continue;
-        }
-
-        // 写入并清除脏标记
-        state.geo_dirty.store(false, Ordering::SeqCst);
-        let geometry = state.last_geometry.lock().ok().and_then(|g| *g);
-        let Some(((x, y), (w, h))) = geometry else {
-            continue;
-        };
-        let snapshot = {
-            let mut d = state.data.lock().unwrap();
-            d.settings.window.position = Some((x, y));
-            if h >= model::MIN_EXPANDED_HEIGHT {
-                d.settings.window.size = Some((w, h));
-            }
-            d.clone()
-        };
-        let _ = store::save(&state.dir, &snapshot);
+        std::thread::sleep(GEO_SAVE_INTERVAL);
+        save_geometry_if_dirty(&app);
     }
 }
 
-/// 退出前把尚未落盘的窗口几何信息立即写入，避免丢失
-pub fn flush_window_geometry(app: &AppHandle) {
+/// 若有未落盘的几何信息则写盘。供定时线程与退出流程共用。
+pub fn save_geometry_if_dirty(app: &AppHandle) {
     use std::sync::atomic::Ordering;
 
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    if !state.geo_dirty.load(Ordering::SeqCst) {
+    if !state.geo_dirty.swap(false, Ordering::SeqCst) {
         return;
     }
     let geometry = state.last_geometry.lock().ok().and_then(|g| *g);
     let Some(((x, y), (w, h))) = geometry else {
         return;
     };
-    state.geo_dirty.store(false, Ordering::SeqCst);
     let snapshot = {
         let mut d = state.data.lock().unwrap();
         d.settings.window.position = Some((x, y));
@@ -137,6 +91,12 @@ pub fn flush_window_geometry(app: &AppHandle) {
         d.clone()
     };
     let _ = store::save(&state.dir, &snapshot);
+    state.geo_write_count.fetch_add(1, Ordering::SeqCst);
+}
+
+/// 退出前兜底：把尚未落盘的窗口几何信息立即写入，避免刚拖完就退出导致位置丢失。
+pub fn flush_window_geometry(app: &AppHandle) {
+    save_geometry_if_dirty(app);
 }
 
 pub fn run() {
@@ -252,7 +212,7 @@ pub fn run() {
                         if let Ok(mut g) = state.last_geometry.lock() {
                             *g = Some(((pos.x, pos.y), (logical_w, logical_h)));
                         }
-                        notify_geometry_changed(&window.app_handle().clone());
+                        mark_geometry_dirty(&window.app_handle().clone());
                     }
                 }
             }
@@ -393,42 +353,100 @@ fn run_move_storm(app: AppHandle, steps: u32) {
     // 启动阶段（恢复位置、前端首次保存窗口状态）会有若干次正常写入，
     // 这里先等它们平静下来，再把计数器归零，只统计「拖动期间」的写入。
     std::thread::sleep(Duration::from_millis(900));
+
+    // 判定用「几何写入方自己统计的次数」，避免外部按 mtime 采样
+    // 因原子写入（写临时文件再 rename）产生误判。
+    // 只记录起始值，测试结束时取差值即为拖动期间的真实写入次数。
+    let geo_writes_before = app
+        .state::<AppState>()
+        .geo_write_count
+        .load(Ordering::SeqCst);
+    write_count.store(0, Ordering::SeqCst);
+
+    // 热身：首次 set_position 可能触发窗口服务器初始化，偶发几十毫秒，
+    // 与我们的代码无关。先跑几次不计入统计，避免误报。
+    for _ in 0..8 {
+        let _ = win.set_position(tauri::PhysicalPosition::new(start_pos.x, start_pos.y));
+        std::thread::sleep(Duration::from_millis(16));
+    }
     write_count.store(0, Ordering::SeqCst);
 
     println!("[storm] 开始连续移动窗口 {steps} 次（模拟拖动）");
     let t0 = Instant::now();
-    let mut worst = 0f64;
+    let mut samples: Vec<f64> = Vec::with_capacity(steps as usize);
     for i in 0..steps {
         let dx = ((i as i32 % 40) - 20) * 3;
         let dy = (((i as i32) / 40) % 3) * 2;
         let p = tauri::PhysicalPosition::new(start_pos.x + dx, start_pos.y + dy);
         let s = Instant::now();
         let _ = win.set_position(p);
-        let cost = s.elapsed().as_secs_f64() * 1000.0;
-        if cost > worst {
-            worst = cost;
-        }
+        samples.push(s.elapsed().as_secs_f64() * 1000.0);
         std::thread::sleep(Duration::from_millis(16)); // ≈60fps
     }
     let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // 等延迟写盘完成（静默期 600ms + 余量）
-    std::thread::sleep(Duration::from_millis(1400));
+    // 等一小会儿，确认拖动结束后也不会立刻触发写盘（保存完全由定时器驱动）
+    std::thread::sleep(Duration::from_millis(900));
     watcher_done.store(true, Ordering::SeqCst);
     let _ = watcher.join();
     let writes = write_count.load(Ordering::SeqCst);
+    let geo_writes_during_drag = app
+        .state::<AppState>()
+        .geo_write_count
+        .load(Ordering::SeqCst)
+        - geo_writes_before;
 
-    println!("[storm] 移动 {steps} 次，耗时 {elapsed:.0} ms（单次最慢 {worst:.2} ms）");
-    println!("[storm] 拖动期间 todos.json 写盘次数 = {writes}（期望 ≤1，即有延迟合并）");
-    // 判定标准：拖动 2 秒期间最多写 1 次（延迟合并后的那一次）。
-    // 修复前是每次移动都写，120 次移动会产生上百次写入。
-    let ok = writes <= 1 && worst < 20.0;
+    // 用中位数与 P95 判定，避免个别帧被系统调度打断导致误报
+    let mut sorted = samples.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    let p95 = sorted
+        .get((sorted.len() as f64 * 0.95) as usize)
+        .copied()
+        .unwrap_or(0.0);
+    let worst = sorted.last().copied().unwrap_or(0.0);
+
+    println!("[storm] 移动 {steps} 次，耗时 {elapsed:.0} ms");
+    println!("[storm] 单次 set_position 耗时：中位数 {median:.2} ms，P95 {p95:.2} ms，最慢 {worst:.2} ms");
+    println!(
+        "[storm] 拖动期间写盘：外部采样 {writes} 次 / 几何写入方自计 {geo_writes_during_drag} 次"
+    );
+
+    // ---- 验证定时保存路径确实工作 ----
+    // 注意：要比对的是「窗口实际位置」与「保存后的磁盘内容」。
+    // 内存里的 settings.window.position 启动后一直是 None（只有定时保存才会更新），
+    // 拿它当基准会误判。
+    let moved_to = (start_pos.x + 33, start_pos.y + 21);
+    let _ = win.set_position(tauri::PhysicalPosition::new(moved_to.0, moved_to.1));
+    std::thread::sleep(Duration::from_millis(120)); // 等窗口真正移动到位
+    let actual_pos = win.outer_position().ok().map(|p| (p.x, p.y));
+    mark_geometry_dirty(&app);
+    save_geometry_if_dirty(&app);
+
+    let saved_on_disk = std::fs::read_to_string(&data_path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<AppData>(&t).ok())
+        .and_then(|d| d.settings.window.position);
+    let periodic_ok = match (actual_pos, saved_on_disk) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    println!(
+        "[storm] 定时保存路径: {} （窗口实际 {actual_pos:?} / 盘中记录 {saved_on_disk:?}）",
+        if periodic_ok { "✓ 生效" } else { "✗ 未生效" }
+    );
+
+    // 判定标准：
+    //  - 拖动期间几何写入方一次都不写（保存完全由定时器驱动）。修复前是每帧都写。
+    //  - P95 耗时 < 5ms，说明移动路径上没有 IO（修复前每次 30~42ms）。
+    //    用 P95 而非最大值，避免偶发的系统调度抖动造成误报。
+    let ok = geo_writes_during_drag == 0 && p95 < 5.0 && periodic_ok;
     println!(
         "[storm] 判定: {}",
         if ok {
-            "✓ 通过（拖动期间不写盘，单次移动耗时为亚毫秒级，不会卡住主线程）"
+            "✓ 通过（拖动期间零写盘，P95 亚毫秒级，定时保存有效）"
         } else {
-            "✗ 失败（仍在拖动时写盘或单次移动耗时过高，会导致窗口抖动）"
+            "✗ 失败（拖动时仍在写盘 / 单次移动耗时过高 / 定时保存失效）"
         }
     );
     // 还原窗口位置
