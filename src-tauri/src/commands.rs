@@ -358,16 +358,28 @@ pub fn save_window_state(
     height: Option<f64>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let data = {
+    let (data, changed) = {
         let mut d = state.data.lock().unwrap();
+        let mut changed = false;
         if let (Some(x), Some(y)) = (x, y) {
-            d.settings.window.position = Some((x, y));
+            if d.settings.window.position != Some((x, y)) {
+                d.settings.window.position = Some((x, y));
+                changed = true;
+            }
         }
+        // 收起状态下的高度不写入，避免覆盖展开高度的记忆值
         if let (Some(w), Some(h)) = (width, height) {
-            d.settings.window.size = Some((w, h));
+            if h >= crate::model::MIN_EXPANDED_HEIGHT && d.settings.window.size != Some((w, h)) {
+                d.settings.window.size = Some((w, h));
+                changed = true;
+            }
         }
-        d.clone()
+        (d.clone(), changed)
     };
+    // 没有任何变化时不写盘，避免无意义 IO 与误触发 git 自动提交
+    if !changed {
+        return Ok(());
+    }
     persist(&app, &data)
 }
 

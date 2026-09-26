@@ -70,13 +70,14 @@ pub fn run() {
             }
 
             // ---- 恢复窗口位置/尺寸/收起状态 ----
-            let (pos, size, collapsed) = {
+            let (pos, size, collapsed, start_hidden) = {
                 let state = app.state::<AppState>();
                 let d = state.data.lock().unwrap();
                 (
                     d.settings.window.position,
                     d.settings.window.size,
                     d.settings.window.collapsed,
+                    d.settings.start_hidden,
                 )
             };
             if let Some(win) = app.get_webview_window("main") {
@@ -98,9 +99,13 @@ pub fn run() {
                     }
                 }
                 if collapsed {
-                    let _ = win.set_size(tauri::LogicalSize::new(320.0, 52.0));
+                    let _ = win.set_size(tauri::LogicalSize::new(320.0, model::COLLAPSED_HEIGHT));
                 }
                 let _ = win.set_always_on_top(true);
+                // 开机自启时可选择直接隐藏到托盘
+                if start_hidden {
+                    let _ = win.hide();
+                }
             }
 
             // ---- 冒烟模式：启动 N 秒后自动退出（用于无人值守验证 GUI 能起来）----
@@ -122,15 +127,28 @@ pub fn run() {
                         let scale = window.scale_factor().unwrap_or(1.0);
                         let logical_h = size.height as f64 / scale;
                         let logical_w = size.width as f64 / scale;
-                        let mut d = state.data.lock().unwrap();
-                        d.settings.window.position = Some((pos.x, pos.y));
-                        // 收起状态下的高度不写入记忆值
-                        if logical_h >= model::MIN_EXPANDED_HEIGHT {
-                            d.settings.window.size = Some((logical_w, logical_h));
+
+                        let (snapshot, changed) = {
+                            let mut d = state.data.lock().unwrap();
+                            let mut changed = false;
+                            if d.settings.window.position != Some((pos.x, pos.y)) {
+                                d.settings.window.position = Some((pos.x, pos.y));
+                                changed = true;
+                            }
+                            // 收起状态下的高度不写入记忆值
+                            if logical_h >= model::MIN_EXPANDED_HEIGHT
+                                && d.settings.window.size != Some((logical_w, logical_h))
+                            {
+                                d.settings.window.size = Some((logical_w, logical_h));
+                                changed = true;
+                            }
+                            (d.clone(), changed)
+                        };
+
+                        // 仅在位置/尺寸真正变化时落盘，避免拖动过程中反复写盘
+                        if changed {
+                            let _ = store::save(&state.dir, &snapshot);
                         }
-                        let snapshot = d.clone();
-                        drop(d);
-                        let _ = store::save(&state.dir, &snapshot);
                     }
                 }
             }

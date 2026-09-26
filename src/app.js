@@ -50,7 +50,6 @@ const trace = (step) => {
 let data = null;                 // AppData 快照
 let filter = "all";              // all | active | done
 let newPriority = "normal";      // 新增时的优先级
-let pendingDrag = false;         // 新增行拖动中被激活过一次
 let toastTimer = null;
 let confirmResolve = null;
 
@@ -510,8 +509,6 @@ function syncSettingsUI() {
   set("s-sound", s.reminder.sound);
   set("s-voice", s.reminder.voice);
   set("s-on-top", s.window.always_on_top);
-  el("s-opacity").value = String(Math.round(s.window.opacity * 100));
-  el("s-opacity-out").textContent = `${Math.round(s.window.opacity * 100)}%`;
   el("s-theme").value = s.window.theme;
   set("s-start-hidden", s.start_hidden);
   el("s-sort").value = s.sort;
@@ -535,7 +532,6 @@ function collectSettings() {
   s.reminder.sound = el("s-sound").checked;
   s.reminder.voice = el("s-voice").checked;
   s.window.always_on_top = el("s-on-top").checked;
-  s.window.opacity = Number(el("s-opacity").value) / 100;
   s.window.theme = el("s-theme").value;
   s.start_hidden = el("s-start-hidden").checked;
   s.sort = el("s-sort").value;
@@ -857,12 +853,6 @@ function installEvents() {
     const node = el(id);
     node?.addEventListener("change", () => saveSettingsSoon());
   }
-  el("s-opacity").addEventListener("input", () => {
-    const v = Number(el("s-opacity").value);
-    el("s-opacity-out").textContent = `${v}%`;
-    document.documentElement.style.setProperty("--alpha", String(v / 100));
-  });
-  el("s-opacity").addEventListener("change", () => saveSettingsSoon());
   el("s-autostart").addEventListener("change", async () => {
     try {
       const on = await invoke("set_autostart", { enabled: el("s-autostart").checked });
@@ -1106,16 +1096,20 @@ function start() {
   boot().catch((e) => {
     const msg = e?.message ?? String(e);
     trace(`start:boot-FAIL ${msg}`);
-    const pre = document.createElement("pre");
-    pre.style.cssText =
-      "padding:16px;color:#ff8a80;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap";
-    pre.textContent = `启动失败：${msg}`;
-    document.body.replaceChildren(pre);
+    logError(`启动失败：${msg}`);
+    showFatal(msg);
   });
 }
 
+function showFatal(msg) {
+  const pre = document.createElement("pre");
+  pre.style.cssText =
+    "padding:16px;color:#ff8a80;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap";
+  pre.textContent = `启动失败：${msg}\n\n诊断信息见应用数据目录下的 boot-trace.log 与 frontend.log`;
+  document.body.replaceChildren(pre);
+}
+
 // 脚本在 <head> 中以 module 方式加载，需等 DOM 就绪
-trace(`module:evaluated readyState=${document.readyState}`);
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", start, { once: true });
 } else {

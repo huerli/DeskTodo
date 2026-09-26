@@ -203,7 +203,60 @@ git checkout HEAD~3 -- todos.json   # 回滚到 3 个提交前
 
 ---
 
-## 六、项目结构
+## 六、自检与诊断
+
+### 无人值守自检
+
+不需要图形界面即可验证核心逻辑（存储、备份自愈、CRUD、排序、导出导入、
+到期判定、Git 本地提交与真实 push/pull）：
+
+```bash
+bash scripts/build.sh debug
+.bundle 或 target 下的 desk-todo --self-test
+# 或
+CARGO_TARGET_DIR=../.cargo-target src-tauri/target/debug/desk-todo --self-test
+```
+
+输出示例（节选）：
+
+```
+[3/6] 落盘 + 重读一致性
+  ok   导出 JSON 文件
+  ok   导入后标题/优先级/到期时间一致
+[6/6] Git 推送 / 拉取（本地裸仓库作为远程）
+  ok   已推送 (已获取远程更新；已推送到远程)
+  ok   拉取后本地已包含另一台设备的数据
+== 全部通过 ==
+```
+
+### 冒烟启动
+
+验证 GUI 能否正常创建窗口与托盘，N 秒后自动退出：
+
+```bash
+bash scripts/run.sh debug --exit-after 8
+```
+
+### 诊断文件
+
+应用数据目录下会自动写入两个诊断文件，界面出问题时先看它们：
+
+| 文件 | 内容 |
+| --- | --- |
+| `boot-trace.log` | 前端启动轨迹（每一步耗时），用于定位"界面空白"卡在哪一步 |
+| `frontend.log` | 前端 `console.error`、未捕获异常、未处理的 Promise 拒绝 |
+
+### 排查经验（开发时容易踩的坑）
+
+1. **前端资源是编译期内嵌的**：改完 `src/` 下的文件必须重新 `build`，重启进程没用。
+2. **WKWebView 会持久缓存静态资源**：如果改了前端却看不到效果，执行
+   `rm -rf ~/Library/WebKit/<bundle-id> ~/Library/Caches/<bundle-id>` 后重试。
+3. **`window.prompt()` 在 WKWebView 中不存在**：本项目用自绘弹窗（`askBox`）代替。
+4. **透明窗口需要 macOS 私有 API**：本项目改用不透明窗口 + CSS 圆角，避免 App Store 拒审。
+
+---
+
+## 七、项目结构
 
 ```
 desk-todo/
@@ -213,12 +266,16 @@ desk-todo/
 │  └─ app.js                   Tauri 命令调用、渲染、拖拽、通知与语音
 ├─ src-tauri/
 │  ├─ src/lib.rs               应用装配、到期扫描线程、自动提交线程、窗口事件
+│  ├─ src/main.rs              入口（含 --self-test / --exit-after 参数）
 │  ├─ src/model.rs             数据模型与磁盘格式
 │  ├─ src/store.rs             原子写入、备份轮转、损坏自愈、导入导出
-│  ├─ src/commands.rs          Tauri 命令：CRUD / 设置 / 导入导出 / 自启 / 通知
+│  ├─ src/commands.rs          Tauri 命令：CRUD / 设置 / 导入导出 / 自启 / 通知 / 诊断
 │  ├─ src/git_sync.rs          Git 同步（libgit2 + 系统 git 两层）
 │  ├─ src/tray.rs              托盘图标与菜单
+│  ├─ src/self_test.rs         无人值守自检
+│  ├─ Cargo.toml               依赖与 release 优化（LTO / strip）
 │  ├─ tauri.conf.json          窗口与打包配置
+│  ├─ build.rs                 构建脚本
 │  └─ capabilities/default.json 权限白名单
 ├─ scripts/
 │  ├─ env.sh                   环境注入（cargo / node）
@@ -233,7 +290,7 @@ desk-todo/
 
 ---
 
-## 七、常见问题
+## 八、常见问题
 
 **收不到系统通知？**
 `⚙ → 通用 → 发送一条测试通知`。macOS 需在「系统设置 → 通知」中允许 DeskTodo；
@@ -263,6 +320,6 @@ xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
 
 ---
 
-## 八、许可
+## 九、许可
 
 个人使用自由；如需商用请自行确认内置依赖（Tauri 为 MIT/Apache-2.0，libgit2 为 GPL-2.0 with linking exception）的合规性。

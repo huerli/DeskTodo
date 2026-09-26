@@ -14,6 +14,8 @@ pnpm-debug.log
 # ---- 应用运行时数据（不应进版本库）----
 todos.json
 todos.corrupted-*.json
+boot-trace.log
+frontend.log
 backups/
 
 # ---- 编辑器 / 系统 ----
