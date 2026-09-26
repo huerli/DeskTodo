@@ -185,10 +185,16 @@ body {
   display: none !important;
 }
 
+/* 收起态才显示摘要条 */
+.widget.collapsed .collapsed-bar {
+  display: flex;
+}
+
 /* ---------------------------------------------------------- 收起摘要条 */
 
+/* 摘要条只在收起态显示；显隐完全由 CSS 决定，JS 不再参与切换 */
 .collapsed-bar {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 6px;
   height: 26px;

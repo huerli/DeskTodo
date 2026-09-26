@@ -577,8 +577,21 @@ function syncTimeField() {
   el("btn-clear-time").classList.toggle("hidden", !has);
 }
 
-/* ---------------------------------------------------------- 设置面板 Tab */
+/* ---------------------------------------------------------- 收起 / 展开 */
 
+/**
+ * 统一设置收起状态。
+ * 只切换 widget 上的 collapsed 类：
+ *   - CSS `.widget.collapsed .body { display:none }` 负责隐藏列表区
+ *   - CSS `.collapsed-bar` 默认 display:none，仅 `.widget.collapsed` 下显示
+ * 注意：设置面板是 body 的兄弟节点，不受这些规则影响，
+ * 所以收起状态下依然能打开设置（此前它在 body 内部，会被一并隐藏）。
+ */
+function applyCollapsed(collapsed) {
+  $.widget.classList.toggle("collapsed", !!collapsed);
+}
+
+/* ---------------------------------------------------------- 设置面板 Tab */
 const SETTINGS_TABS = ["general", "window", "git", "data"];
 /** 默认展示「Git 同步」——数据同步是打开设置时最常见的目的 */
 const DEFAULT_SETTINGS_TAB = "git";
@@ -761,11 +774,12 @@ function beep() {
 
 function installEvents() {
   // 收起 / 展开
+  // 只切换 widget 上的 collapsed 类，body 与摘要条的显隐交给 CSS
+  // （.widget.collapsed .body{display:none} / .collapsed-bar 默认隐藏）。
+  // 设置面板是 body 的兄弟节点，因此收起状态下依然可以打开设置。
   el("btn-collapse").addEventListener("click", async () => {
     const collapsed = !(data?.settings?.window?.collapsed ?? false);
-    $.widget.classList.toggle("collapsed", collapsed);
-    $.body.classList.toggle("hidden", collapsed);
-    $.collapsedBar.classList.toggle("hidden", !collapsed);
+    applyCollapsed(collapsed);
     await run(() => invoke("set_collapsed", { collapsed }));
     if (!collapsed) $.inputTitle.focus();
   });
@@ -780,20 +794,45 @@ function installEvents() {
   });
 
   // 设置面板
+  // 打开设置时若处于收起态，先自动展开：收起高度只有 68px，
+  // 设置内容会被裁得几乎不可用。关闭时再恢复到原来的收起状态。
+  /** 打开设置前是否处于收起态（关闭时用于还原） */
+  let restoreCollapsed = false;
+
   el("btn-settings").addEventListener("click", async () => {
     await saveSettings(false).catch(() => {});
     // 恢复上次查看的分页（首次打开为「Git 同步」）
     setSettingsTab(loadSettingsTab(), false);
+
+    const collapsed = data?.settings?.window?.collapsed ?? false;
+    restoreCollapsed = collapsed;
+    if (collapsed) {
+      // 只改本地显示状态，不写盘；窗口尺寸由下面的 set_collapsed 一次性调整
+      data.settings.window.collapsed = false;
+      applyCollapsed(false);
+      await invoke("set_collapsed", { collapsed: false }).catch(() => {});
+    }
+
     $.settings.classList.remove("hidden");
     try {
       await invoke("get_autostart").then((v) => (el("s-autostart").checked = !!v));
     } catch {}
     refreshGitStatus();
   });
-  el("btn-settings-close").addEventListener("click", async () => {
+
+  const closeSettings = async () => {
     $.settings.classList.add("hidden");
-    await saveSettings(false).catch(() => {});
-  });
+    // 若打开前是收起的，关闭后恢复收起
+    if (restoreCollapsed) {
+      restoreCollapsed = false;
+      data.settings.window.collapsed = true;
+      applyCollapsed(true);
+      await run(() => invoke("set_collapsed", { collapsed: true }));
+    } else {
+      await saveSettings(false).catch(() => {});
+    }
+  };
+  el("btn-settings-close").addEventListener("click", closeSettings);
   el("settings-tabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".tab");
     if (!tab) return;
@@ -1075,9 +1114,7 @@ async function boot() {
 
   // 收起态
   const collapsed = data.settings.window.collapsed;
-  $.widget.classList.toggle("collapsed", collapsed);
-  $.body.classList.toggle("hidden", collapsed);
-  $.collapsedBar.classList.toggle("hidden", !collapsed);
+  applyCollapsed(collapsed);
 
   installPointerDrag();
   installEvents();
