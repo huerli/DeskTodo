@@ -179,6 +179,11 @@ impl GitManager {
             Err(e) => return Err(format!("拉取远端失败：{e}")),
         }
 
+        // 分支对齐：本地 HEAD 可能停留在别的分支上（例如上次配置的分支名与
+        // 本次不同，或本地仓库是在另一分支上 git init 的）。若不对齐，
+        // 后面的 rebase/推送都会发生在错误的分支，造成两端各自长出一条历史。
+        align_branch(&self.dir, settings)?;
+
         let upstream = format!("{remote}/{}", settings.branch);
         if run_git(&self.dir, settings, &["rev-parse", "--verify", &upstream]).is_ok() {
             if let Ok(local_head) = run_git(&self.dir, settings, &["rev-parse", "HEAD"]) {
@@ -186,10 +191,38 @@ impl GitManager {
                 let remote_head = run_git(&self.dir, settings, &["rev-parse", &upstream])
                     .map(|s| s.trim().to_string())
                     .unwrap_or_default();
+                // merge-base 为空即两条历史没有共同祖先（输出为空且返回非零）
                 let base = run_git(&self.dir, settings, &["merge-base", "HEAD", &upstream])
                     .map(|s| s.trim().to_string())
                     .unwrap_or_default();
-                if local_head != remote_head {
+if local_head != remote_head {
+                    // 先判定「历史无关」，再决定是否 rebase。
+                    //
+                    // 关键：一旦确认无共同祖先就**立即返回**，绝不继续往下执行 --
+                    // 否则后面的 push 会把远端分支改写成我们本地的历史，
+                    // 静默丢掉远端数据。「报错」远好过「悄悄覆盖」。
+                    if base.is_empty() {
+                        return Err(format!(
+                            "本地与远程历史无关，无法自动合并。\n\
+                             常见原因：远端仓库被重建、换过默认分支，或本地曾在另一个分支上独立初始化。\n\
+                             本地待办数据完好，未被改动；远端也未被覆盖。\n\n\
+                             处理办法（二选一）：\n\
+                               1) 以远端数据为准，放弃本地 git 历史：\n\
+                                 在数据目录 {dir} 执行\n\
+                                 git fetch {remote} && git reset --hard {upstream}\n\
+                               2) 以本地数据为准，覆盖远端：\n\
+                                 先备份 todos.json，再在数据目录执行\n\
+                                 git push --force-with-lease {remote} HEAD:{branch}\n\n\
+                             参考：本地 {local} / 远端 {rh}",
+                            dir = self.dir.display(),
+                            remote = remote,
+                            upstream = upstream,
+                            branch = settings.branch,
+                            local = &local_head[..8.min(local_head.len())],
+                            rh = &remote_head[..8.min(remote_head.len())],
+                        ));
+                    }
+
                     let rebase = run_git(
                         &self.dir,
                         settings,
@@ -202,13 +235,21 @@ impl GitManager {
                         }
                         Err(e) => {
                             let _ = run_git(&self.dir, settings, &["rebase", "--abort"]);
-                            let hint = if base.is_empty() {
-                                "本地与远程历史无关"
-                            } else {
-                                "存在冲突"
-                            };
+                            // 部分 git 版本在无关历史时报的是 rebase 自身的错误
+                            let unrelated = e.contains("unrelated histories")
+                                || e.contains("refusing to merge unrelated");
+                            if unrelated {
+                                return Err(format!(
+                                    "本地与远程历史无关，无法自动合并（本地数据完好，远端未被覆盖）。\n\
+                                     请在数据目录 {dir} 用 git fetch 后 git reset --hard 对齐远端，\n\
+                                     或备份 todos.json 后用 git push --force-with-lease 覆盖远端。\n\n\
+                                     原始错误：{e}",
+                                    dir = self.dir.display(),
+                                ));
+                            }
                             return Err(format!(
-                                "{hint}，自动同步已中止（本地数据未受影响）。请手动处理后重试。\n{e}"
+                                "本地与远程都有改动且存在冲突，自动同步已中止（本地数据未受影响）。\n\
+                                 请手动处理后再试。\n{e}"
                             ));
                         }
                     }
@@ -393,6 +434,51 @@ fn write_gitignore(dir: &Path) {
     }
     let _ = std::fs::write(&path, content);
 }
+
+/// 让本地 HEAD 落在配置的分支上。
+///
+/// 为什么需要：若本地 HEAD 停在别的分支（换过分支名、或仓库是在另一分支上
+/// init 的），后面的 rebase 与推送都会作用于错误的分支，导致两端各自长出一条
+/// 历史，最终出现「历史无关」这种难以自行恢复的状态。
+///
+/// 幂等：分支已经正确时不执行任何 git 命令。
+pub fn align_branch(dir: &Path, settings: &SyncSettings) -> Result<(), String> {
+    let want = settings.branch.trim();
+    let want = if want.is_empty() { "main" } else { want };
+
+    let current = run_git(dir, settings, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if current == want {
+        return Ok(());
+    }
+
+    // 工作区有冲突时不动，避免把用户置于更麻烦的状态
+    if let Ok(repo) = git2::Repository::open(dir) {
+        if let Ok(index) = repo.index() {
+            if index.has_conflicts() {
+                return Err("本地存在未解决的合并冲突，已跳过分支切换。\n\
+                            请先在数据目录执行 git status 处理冲突后重试。"
+                    .into());
+            }
+        }
+    }
+
+    // 本地已有目标分支 → 切过去；否则**基于当前 HEAD** 新建。
+    //
+    // 绝不能用 `checkout -B <branch> <upstream>`：那会把本地提交直接丢掉，
+    // 之后 rebase 自己成了空操作，「历史无关」这类真实问题会被静默掩盖，
+    // 用户看到的是"同步成功"，而本地历史已经被换成了远端那份。
+    let has_local = run_git(dir, settings, &["rev-parse", "--verify", &format!("refs/heads/{want}")])
+        .is_ok();
+    if has_local {
+        run_git(dir, settings, &["checkout", want])?;
+    } else {
+        run_git(dir, settings, &["checkout", "-B", want])?;
+    }
+    Ok(())
+}
+
 
 pub fn init_repo(dir: &Path, _settings: &SyncSettings) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

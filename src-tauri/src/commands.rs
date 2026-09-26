@@ -316,7 +316,7 @@ pub fn set_collapsed(app: AppHandle, collapsed: bool) -> Result<AppData, String>
     let (data, expanded) = {
         let mut d = state.data.lock().unwrap();
         d.settings.window.collapsed = collapsed;
-        let (w, h) = d.settings.window.size.unwrap_or((320.0, 460.0));
+        let (w, h) = d.settings.window.size.unwrap_or((320.0, 520.0));
         (d.clone(), (w.max(260.0), h.max(crate::model::MIN_EXPANDED_HEIGHT)))
     };
     if let Some(win) = app.get_webview_window("main") {

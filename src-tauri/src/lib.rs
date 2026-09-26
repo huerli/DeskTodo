@@ -163,7 +163,7 @@ pub fn run() {
                         let msize = mon.size();
                         let wsize = win
                             .outer_size()
-                            .unwrap_or(tauri::PhysicalSize::new(320, 460));
+                            .unwrap_or(tauri::PhysicalSize::new(320, 520));
                         let x = (msize.width as i32 - wsize.width as i32 - 24).max(0);
                         let y = 48i32;
                         let _ = win.set_position(tauri::PhysicalPosition::new(x, y));

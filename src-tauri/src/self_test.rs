@@ -37,7 +37,7 @@ pub fn run() -> Result<(), String> {
     let dir = tmpdir("data");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    println!("\n[1/7] 数据存储");
+    println!("\n[1/8] 数据存储");
     let mut data = AppData::default();
     data.settings.sync.author_name = "SelfTest".into();
     data.settings.sync.author_email = "selftest@localhost".into();
@@ -57,7 +57,7 @@ pub fn run() -> Result<(), String> {
         "损坏文件被改名留档"
     );
 
-    println!("\n[2/7] 待办 CRUD");
+    println!("\n[2/8] 待办 CRUD");
     let mut data = AppData::default();
     let now = chrono::Local::now();
     for (i, title) in ["alpha", "beta", "gamma"].iter().enumerate() {
@@ -118,7 +118,7 @@ pub fn run() -> Result<(), String> {
         "撤销删除后该项回来"
     );
 
-    println!("\n[3/7] 落盘 + 重读一致性");
+    println!("\n[3/8] 落盘 + 重读一致性");
     store::save(&dir, &data)?;
     let reloaded = store::load(&dir);
     check!(reloaded.todos.len() == data.todos.len(), "数量一致");
@@ -151,7 +151,7 @@ pub fn run() -> Result<(), String> {
         "格式错误的文件导入时报错而非 panic"
     );
 
-    println!("\n[4/7] 到期提醒判定");
+    println!("\n[4/8] 到期提醒判定");
     let lead_minutes: i64 = 0;
     let due_now = (chrono::Local::now() - chrono::Duration::seconds(5)).to_rfc3339();
     let parsed = chrono::DateTime::parse_from_rfc3339(&due_now)
@@ -172,7 +172,7 @@ pub fn run() -> Result<(), String> {
     let notified = t.notified_at.is_some();
     check!(notified, "已提醒标记可阻止重复提醒");
 
-    println!("\n[5/7] Git 本地提交");
+    println!("\n[5/8] Git 本地提交");
     let git_dir = tmpdir("git");
     std::fs::create_dir_all(&git_dir).map_err(|e| e.to_string())?;
     let remote_dir = tmpdir("remote");
@@ -236,7 +236,7 @@ pub fn run() -> Result<(), String> {
     check!(st.last_commit.is_some(), "能读到最近提交：{:?}", st.last_commit);
     check!(!st.dirty, "提交后工作区干净");
 
-    println!("\n[6/7] Git 推送 / 拉取（本地裸仓库作为远程）");
+    println!("\n[6/8] Git 推送 / 拉取（本地裸仓库作为远程）");
     let git_bin = crate::git_sync::git_binary();
     check!(git_bin.is_some(), "系统 git 可用: {:?}", git_bin);
     let bare = remote_dir.join("todo-data.git");
@@ -303,7 +303,7 @@ pub fn run() -> Result<(), String> {
         "拉取后本地已包含另一台设备的数据"
     );
 
-    println!("\n[7/7] SSH 选项（防止首次连接新主机时 Host key verification failed）");
+    println!("\n[7/8] SSH 选项（防止首次连接新主机时 Host key verification failed）");
     // 应用以 GIT_TERMINAL_PROMPT=0 运行，SSH 无法询问“是否信任该主机”，
     // 若不带 StrictHostKeyChecking=accept-new 就会直接报 Host key verification failed。
     let ssh_cmd = crate::git_sync::ssh_command("");
@@ -380,6 +380,195 @@ pub fn run() -> Result<(), String> {
             err.lines().next().unwrap_or("").trim()
         );
         let _ = std::fs::remove_dir_all(&ssh_probe);
+    }
+
+    // ---- 直接验证 align_branch 的基本不变量：切换分支时绝不丢弃本地提交 ----
+    // 这是本次修复的核心：旧实现用 `checkout -B <branch> <upstream>`，
+    // 会把本地提交直接换成远端那份，导致「历史无关」被静默掩盖成同步成功。
+    {
+        let ab_dir = tmpdir("alignbr");
+        std::fs::create_dir_all(&ab_dir).map_err(|e| e.to_string())?;
+        let git_bin = crate::git_sync::git_binary().ok_or("未找到 git")?;
+        let ab_git = crate::git_sync::GitManager::new(ab_dir.clone());
+        let mut ab_settings = settings.clone();
+
+        // init_repo 会把 HEAD 设到 main；我们在 main 上放一个提交
+        crate::git_sync::init_repo(&ab_dir, &ab_settings)?;
+        let mut adata = AppData::default();
+        adata.todos.push(Todo {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: "align-item".into(),
+            notes: String::new(),
+            done: false,
+            due_at: None,
+            priority: Priority::Normal,
+            tags: vec![],
+            created_at: chrono::Local::now().to_rfc3339(),
+            updated_at: chrono::Local::now().to_rfc3339(),
+            completed_at: None,
+            notified_at: None,
+            order: 10,
+        });
+        store::save(&ab_dir, &adata)?;
+        ab_settings.branch = "main".into();
+        check!(ab_git.commit_all(&ab_settings, "on main")?, "在 main 上产生提交");
+
+        let head_before = std::process::Command::new(&git_bin)
+            .current_dir(&ab_dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        // 配置改成另一个分支名（本地与远端都没有该分支）
+        ab_settings.branch = "release".into();
+        crate::git_sync::align_branch(&ab_dir, &ab_settings)?;
+
+        let head_after = std::process::Command::new(&git_bin)
+            .current_dir(&ab_dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let branch_now = std::process::Command::new(&git_bin)
+            .current_dir(&ab_dir)
+            .args(["symbolic-ref", "--short", "HEAD"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+        check!(branch_now == "release", "align_branch 切到了配置的分支（{branch_now}）");
+        check!(
+            head_before == head_after && !head_before.is_empty(),
+            "align_branch 未丢弃本地提交（{head_before} -> {head_after}）"
+        );
+        // 数据文件仍在
+        check!(
+            store::load(&ab_dir).todos.iter().any(|t| t.title == "align-item"),
+            "切换分支后本地待办数据仍在工作区"
+        );
+        let _ = std::fs::remove_dir_all(&ab_dir);
+    }
+
+    println!("\n[8/8] 历史无关时的错误提示");
+
+    // 场景：本地与远端在**同一个分支上各自拥有无关的提交**。
+    // 这才是用户实际踩到的情形 —— 本地在 master 上有独立提交，
+    // 远端 master 也是另一条独立历史，rebase 无解。
+    //
+    // 注意：若远端根本没有该分支，应用会跳过 rebase 直接推送（这是正确行为），
+    // 所以测试必须让远端也真实存在同名的、无关的分支。
+    {
+        let div_local = tmpdir("divlocal");
+        let div_remote = tmpdir("divremote");
+        std::fs::create_dir_all(&div_local).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&div_remote).map_err(|e| e.to_string())?;
+
+        let git_bin = crate::git_sync::git_binary().ok_or("未找到 git")?;
+        let run = |dir: &std::path::Path, args: &[&str]| -> (bool, String) {
+            match std::process::Command::new(&git_bin)
+                .current_dir(dir)
+                .args(args)
+                .output()
+            {
+                Ok(o) => (
+                    o.status.success(),
+                    format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    )
+                    .trim()
+                    .to_string(),
+                ),
+                Err(e) => (false, e.to_string()),
+            }
+        };
+
+        // ---- 远端：裸仓库，master 上是独立历史 ----
+        let bare = div_remote.join("data.git");
+        let (ok, msg) = run(&div_remote, &["init", "--bare", "-b", "master", bare.to_str().unwrap()]);
+        check!(ok, "创建裸仓库: {msg}");
+        let seed = div_remote.join("seed");
+        let (ok, _) = run(&div_remote, &["clone", "-q", bare.to_str().unwrap(), seed.to_str().unwrap()]);
+        check!(ok, "克隆裸仓库");
+        std::fs::write(seed.join("remote.txt"), "remote\n").map_err(|e| e.to_string())?;
+        let _ = run(&seed, &["add", "-A"]);
+        let (ok, msg) = run(
+            &seed,
+            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "remote seed"],
+        );
+        check!(ok, "远端提交: {msg}");
+        let (ok, msg) = run(&seed, &["push", "-q", "origin", "master"]);
+        check!(ok, "推送 master 到裸仓库: {msg}");
+
+        // ---- 本地：同样在 master 上，但是另一条无关历史 ----
+        crate::git_sync::init_repo(&div_local, &settings)?;
+        let (ok, msg) = run(&div_local, &["checkout", "-q", "-B", "master"]);
+        check!(ok, "本地切到 master: {msg}");
+        let _ = run(
+            &div_local,
+            &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "local diverge"],
+        );
+        let mut ddata = AppData::default();
+        ddata.todos.push(Todo {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: "diverge-item".into(),
+            notes: String::new(),
+            done: false,
+            due_at: None,
+            priority: Priority::Normal,
+            tags: vec![],
+            created_at: chrono::Local::now().to_rfc3339(),
+            updated_at: chrono::Local::now().to_rfc3339(),
+            completed_at: None,
+            notified_at: None,
+            order: 10,
+        });
+        store::save(&div_local, &ddata)?;
+        let div_git = crate::git_sync::GitManager::new(div_local.clone());
+        let mut div_settings = settings.clone();
+        div_settings.branch = "master".into();
+        div_settings.remote_url = bare.to_string_lossy().to_string();
+        check!(div_git.commit_all(&div_settings, "local seed")?, "本地提交");
+
+        // 前置条件：两边确实无关
+        let (_, mb) = run(&div_local, &["merge-base", "HEAD", "origin/master"]);
+        let unrelated = mb.is_empty() || !mb.chars().all(|c| c.is_ascii_hexdigit());
+        check!(unrelated, "前置条件：本地与 origin/master 确无共同祖先（merge-base 为空）");
+
+        // 抓 fetch 之后的 origin/master，确认它指向裸仓库的 master 而非本地
+        let _ = std::process::Command::new(&git_bin)
+            .current_dir(&div_local)
+            .args(["fetch", "-q", "origin"])
+            .output();
+        let outcome = div_git.sync_now("selftest: 分叉探测", Some(div_settings.clone()), None);
+        let ok_flag = outcome.as_ref().map(|r| r.ok).unwrap_or(false);
+        let pushed_flag = outcome.as_ref().map(|r| r.pushed).unwrap_or(false);
+        let err = outcome.err().unwrap_or_default();
+        // 关键安全性断言：历史无关时**绝不能推送**（那会覆盖远端）
+        check!(
+            !pushed_flag,
+            "历史无关时未执行推送（ok={ok_flag} pushed={pushed_flag}）"
+        );
+        check!(!err.is_empty(), "历史无关时同步失败并返回错误");
+        check!(
+            err.contains("历史无关"),
+            "错误点明「历史无关」：{}",
+            err.lines().next().unwrap_or("").trim()
+        );
+        check!(
+            err.contains("git fetch") && err.contains("reset --hard"),
+            "错误给出可执行的出路（对齐远端 / 覆盖远端）"
+        );
+        let after = store::load(&div_local);
+        check!(
+            after.todos.iter().any(|t| t.title == "diverge-item"),
+            "同步失败后本地数据完好无损"
+        );
+
+        let _ = std::fs::remove_dir_all(&div_local);
+        let _ = std::fs::remove_dir_all(&div_remote);
     }
 
     // 清理临时目录

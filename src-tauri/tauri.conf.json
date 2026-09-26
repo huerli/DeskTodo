@@ -13,7 +13,7 @@
         "label": "main",
         "title": "DeskTodo",
         "width": 320,
-        "height": 460,
+        "height": 520,
         "minWidth": 260,
         "minHeight": 56,
         "resizable": true,

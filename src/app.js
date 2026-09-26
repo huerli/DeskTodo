@@ -52,6 +52,8 @@ let filter = "all";              // all | active | done
 let newPriority = "normal";      // 新增时的优先级
 let toastTimer = null;
 let confirmResolve = null;
+/** 已展开「处理过程」的待办 id。渲染会重建 DOM，所以展开状态存在这里 */
+const openNotes = new Set();
 
 /* ---------------------------------------------------------- 日志与错误上报 */
 
@@ -370,7 +372,7 @@ function render() {
       $.emptySub.textContent = "切回「全部」看看";
     } else {
       $.emptyTitle.textContent = "保持桌面清爽";
-      $.emptySub.textContent = "在下面输入内容，回车即可添加";
+      $.emptySub.textContent = "在下面输入内容，回车即可添加；每条待办可点 💬 记录处理过程";
     }
   }
 
@@ -447,11 +449,109 @@ function renderItem(t) {
     meta.innerHTML = metaBits.join("");
     main.appendChild(meta);
   }
+
+  // ---- 处理过程（备注） ----
+  const hasNote = !!(t.notes && t.notes.trim());
+  const isOpen = openNotes.has(t.id);
+  if (isOpen) li.classList.add("note-open");
+
+  if (isOpen) {
+    // 编辑态：多行文本框，输入自动保存
+    const editor = document.createElement("div");
+    editor.className = "note-editor";
+
+    const ta = document.createElement("textarea");
+    ta.value = t.notes ?? "";
+    ta.placeholder = "记录处理过程、进展、结论…（自动保存）";
+    ta.spellcheck = false;
+
+    const hint = document.createElement("div");
+    hint.className = "note-hint";
+    hint.innerHTML = `<span class="saved">输入即自动保存</span><span>Esc 收起</span>`;
+
+    // 防抖保存：停止输入 500ms 后落盘，避免每个字符都写一次
+    let saveTimer = null;
+    const save = async () => {
+      const v = ta.value;
+      if (v === (t.notes ?? "")) return;
+      const res = await run(() =>
+        invoke("update_todo", { payload: { id: t.id, notes: v } })
+      );
+      if (res) {
+        t.notes = v; // 同步本地引用，避免重复保存
+        hint.querySelector(".saved").textContent = "已保存";
+      }
+    };
+    ta.addEventListener("input", () => {
+      clearTimeout(saveTimer);
+      hint.querySelector(".saved").textContent = "输入中…";
+      saveTimer = setTimeout(save, 500);
+    });
+    ta.addEventListener("blur", () => {
+      clearTimeout(saveTimer);
+      save();
+    });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        clearTimeout(saveTimer);
+        save().then(() => {
+          openNotes.delete(t.id);
+          render();
+        });
+      }
+      // Enter 换行（不提交），Ctrl/Cmd+Enter 收起
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        clearTimeout(saveTimer);
+        save().then(() => {
+          openNotes.delete(t.id);
+          render();
+        });
+      }
+    });
+
+    editor.appendChild(ta);
+    editor.appendChild(hint);
+    main.appendChild(editor);
+    // 渲染后聚焦并把光标放到末尾
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }, 0);
+  } else if (hasNote) {
+    // 折叠态：显示两行预览，点击展开
+    const preview = document.createElement("div");
+    preview.className = "note-preview";
+    preview.textContent = t.notes;
+    preview.title = "点击编辑处理过程";
+    preview.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openNotes.add(t.id);
+      render();
+    });
+    main.appendChild(preview);
+  }
+
   li.appendChild(main);
 
   // 操作
   const actions = document.createElement("div");
   actions.className = "item-actions";
+
+  // 处理过程：有内容时按钮高亮
+  const btnNote = document.createElement("button");
+  btnNote.className = "icon-btn" + (hasNote ? " has-note" : "");
+  btnNote.title = hasNote ? "查看/编辑处理过程" : "添加处理过程";
+  btnNote.innerHTML =
+    '<svg viewBox="0 0 24 24" class="ico"><path d="M5 4h14v12H9l-4 4V4z"/><path d="M9 8h7M9 11.5h5"/></svg>';
+  btnNote.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (openNotes.has(t.id)) openNotes.delete(t.id);
+    else openNotes.add(t.id);
+    render();
+  });
+  actions.appendChild(btnNote);
 
   const btnEdit = document.createElement("button");
   btnEdit.className = "icon-btn";
