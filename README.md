@@ -132,11 +132,16 @@ xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
 ### 三平台一次出包（CI）
 
 推送 `v*` 标签即可触发 `.github/workflows/build.yml`，在 GitHub Actions 上并行构建
-macOS(arm64/x64)、Linux、Windows 安装包并创建 Draft Release：
+macOS(arm64/x64)、Linux、Windows 安装包并创建 Draft Release；全部平台成功且制品齐全后，
+`.github/workflows/publish-release.yml` 自动发布正式 Release：
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
+
+macOS ARM 安装包使用 Intel macOS runner 交叉编译，避免 ARM runner 容量不足导致排队失败。
+若只需补齐已有标签的 ARM 安装包，可手动运行 `recover-macos-arm64` 工作流并填写标签；
+补构建成功后，会核对原标签另外三个平台的成功结果及全部安装包，再继续发布。
 
 > 交叉编译不可行：Tauri 必须在目标操作系统上打包。要在本机产出 Windows 安装包，
 > 需在 Windows 上运行 `scripts/build.sh`，或使用上面的 CI。
