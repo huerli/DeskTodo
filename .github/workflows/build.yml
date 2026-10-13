@@ -20,7 +20,7 @@ jobs:
             args: "--target aarch64-apple-darwin --bundles app,dmg"
             rust-targets: "aarch64-apple-darwin"
             name: macos-arm64
-          - platform: macos-latest # Intel（在 ARM runner 上交叉编译）
+          - platform: macos-15-intel # Intel native build
             args: "--target x86_64-apple-darwin --bundles app,dmg"
             rust-targets: "x86_64-apple-darwin"
             name: macos-x64
