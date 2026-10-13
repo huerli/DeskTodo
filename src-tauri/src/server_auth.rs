@@ -4,6 +4,8 @@ use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -73,30 +75,89 @@ pub fn askpass_main() -> i32 {
 pub struct HostPreview {
     pub host: String,
     pub port: u16,
+    pub key_type: String,
     pub fingerprint: String,
     pub confirmation_id: String,
 }
 struct PendingHost { preview: HostPreview, key_line: String, scanned_at: Instant }
 static PENDING_HOST: Mutex<Option<PendingHost>> = Mutex::new(None);
 
-pub fn scan_host(server: &ServerSettings) -> Result<HostPreview, String> {
-    let host = endpoint(server)?;
+fn supported_host_key(key_type: &str) -> bool {
+    matches!(key_type, "ssh-ed25519" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521" | "ssh-rsa")
+}
+
+fn scanned_key(stdout: &str, host: &str, port: u16) -> Option<String> {
+    let expected = if port == 22 { host.to_string() } else { format!("[{host}]:{port}") };
+    // Some clients bracket IPv6 even for the default port. Save a canonical
+    // endpoint so pairing and subsequent trust checks use the same spelling.
+    let bracketed = format!("[{host}]:{port}");
+    ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"]
+        .iter().find_map(|key_type| {
+            stdout.lines().find_map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.len() == 3 && (fields[0] == expected || fields[0] == bracketed) && fields[1] == *key_type {
+                    Some(format!("{expected} {} {}", fields[1], fields[2]))
+                } else { None }
+            })
+        })
+}
+
+fn scan_error(stderr: &str, host: &str, port: u16) -> String {
+    let details = stderr.lines().filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .take(6).collect::<Vec<_>>().join("\n");
+    let message = format!("未读取到服务器 {host}:{port} 的主机密钥（ED25519 / ECDSA / RSA），请检查 SSH 地址、端口及服务器主机密钥配置");
+    if details.is_empty() { message } else { format!("{message}\nSSH 诊断：{details}") }
+}
+
+#[cfg(windows)]
+fn git_keyscan(git: &Path) -> Option<PathBuf> {
+    // Git may be on PATH via cmd/, bin/, or mingw64/bin/. Keep the
+    // scanner alongside its MSYS runtime instead of copying the executable.
+    git.ancestors().skip(1).take(3)
+        .map(|directory| directory.join("usr/bin/ssh-keyscan.exe"))
+        .find(|path| path.is_file())
+}
+
+fn scan_keys(host: &str, port: u16) -> Result<String, String> {
     let scan = which::which("ssh-keyscan").map_err(|_| "未找到 ssh-keyscan，请安装 OpenSSH 客户端")?;
-    let output = Command::new(scan).args(["-T", "5", "-p", &server.port.to_string(), "-t", "ed25519", &host])
-        .output().map_err(|e| format!("读取服务器指纹失败：{e}"))?;
-    let expected = if server.port == 22 { host.clone() } else { format!("[{host}]:{}", server.port) };
-    let key_line = String::from_utf8_lossy(&output.stdout).lines().find(|line| {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        fields.len() == 3 && fields[0] == expected && fields[1] == "ssh-ed25519"
-    }).ok_or("未读取到服务器 ED25519 主机密钥，请检查 SSH 地址与端口")?.to_string();
+    let run = |binary: &Path| Command::new(binary)
+        .args(["-T", "5", "-p", &port.to_string(), "-t", "ed25519,ecdsa,rsa", host])
+        .output().map_err(|e| format!("读取服务器指纹失败：{e}"));
+    let output = run(&scan)?;
+    if let Some(key) = scanned_key(&String::from_utf8_lossy(&output.stdout), host, port) {
+        return Ok(key);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    #[cfg(windows)]
+    if stderr.contains("choose_kex: unsupported KEX method") {
+        // Win32-OpenSSH #2140: older keyscan builds advertise a KEX they
+        // cannot implement. ssh.exe itself is unaffected; only retry scanning.
+        if let Some(alternative) = which::which("git").ok().and_then(|git| git_keyscan(&git))
+            .filter(|path| path != &scan)
+        {
+            let retried = run(&alternative)?;
+            return scanned_key(&String::from_utf8_lossy(&retried.stdout), host, port)
+                .ok_or_else(|| scan_error(&String::from_utf8_lossy(&retried.stderr), host, port));
+        }
+        return Err(format!("Windows OpenSSH 的主机密钥扫描工具存在密钥交换兼容问题，请更新 OpenSSH 或安装 Git for Windows 后重试。\n{}", scan_error(&stderr, host, port)));
+    }
+    Err(scan_error(&stderr, host, port))
+}
+
+pub fn scan_host(server: &ServerSettings) -> Result<HostPreview, String> {
+    *PENDING_HOST.lock().map_err(|_| "主机指纹锁异常")? = None;
+    let host = endpoint(server)?;
+    let key_line = scan_keys(&host, server.port)?;
+    let key_type = key_line.split_whitespace().nth(1).unwrap().to_string();
     let keygen = which::which("ssh-keygen").map_err(|_| "未找到 ssh-keygen，请安装 OpenSSH 客户端")?;
     let mut child = Command::new(keygen).args(["-l", "-f", "-", "-E", "sha256"])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
-    child.stdin.take().ok_or("无法计算主机指纹")?.write_all(key_line.as_bytes()).map_err(|e| e.to_string())?;
+    writeln!(child.stdin.take().ok_or("无法计算主机指纹")?, "{key_line}").map_err(|e| e.to_string())?;
     let result = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !result.status.success() { return Err("服务器主机密钥格式不正确，无法计算指纹".into()); }
     let fingerprint = String::from_utf8_lossy(&result.stdout).split_whitespace().nth(1)
         .filter(|value| value.starts_with("SHA256:")).ok_or("服务器主机密钥格式不正确")?.to_string();
-    let preview = HostPreview { host, port: server.port, fingerprint, confirmation_id: uuid::Uuid::new_v4().to_string() };
+    let preview = HostPreview { host, port: server.port, key_type, fingerprint, confirmation_id: uuid::Uuid::new_v4().to_string() };
     *PENDING_HOST.lock().map_err(|_| "主机指纹锁异常")? = Some(PendingHost { preview: preview.clone(), key_line, scanned_at: Instant::now() });
     Ok(preview)
 }
@@ -143,9 +204,9 @@ pub fn trust_paired_host(dir:&Path,server:&ServerSettings,line:&str)->Result<(),
     let host=endpoint(server)?;
     let expected=if server.port==22 {host.clone()}else{format!("[{host}]:{}",server.port)};
     let fields:Vec<_>=line.split_whitespace().collect();
-    if fields.len()!=3 || fields[0]!=expected || fields[1]!="ssh-ed25519" {return Err("配对码中的服务器指纹信息不正确".into());}
+    if fields.len()!=3 || fields[0]!=expected || !supported_host_key(fields[1]) {return Err("配对码中的服务器指纹信息不正确".into());}
     let token=uuid::Uuid::new_v4().to_string();
-    let preview=HostPreview {host,port:server.port,fingerprint:"paired".into(),confirmation_id:token.clone()};
+    let preview=HostPreview {host,port:server.port,key_type:fields[1].into(),fingerprint:"paired".into(),confirmation_id:token.clone()};
     *PENDING_HOST.lock().map_err(|_|"主机指纹锁异常")?=Some(PendingHost {preview,key_line:line.trim().into(),scanned_at:Instant::now()});
     trust_host(dir,&token).map(|_|())
 }
@@ -153,6 +214,68 @@ pub fn trust_paired_host(dir:&Path,server:&ServerSettings,line:&str)->Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(windows)]
+    fn discovers_git_scanner_from_common_git_entrypoints() {
+        let root = std::env::temp_dir().join(format!("desk-todo-scanner-test-{}", uuid::Uuid::new_v4()));
+        let scanner = root.join("usr/bin/ssh-keyscan.exe");
+        assert!(git_keyscan(&root.join("cmd/git.exe")).is_none());
+        std::fs::create_dir_all(scanner.parent().unwrap()).unwrap();
+        std::fs::write(&scanner, []).unwrap();
+        for entrypoint in ["cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"] {
+            assert_eq!(git_keyscan(&root.join(entrypoint)), Some(scanner.clone()));
+        }
+        std::fs::remove_file(&scanner).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires DESK_TODO_TEST_SSH_HOST and a reachable SSH server"]
+    fn live_host_scan_without_trusting_or_logging_in() {
+        let server = ServerSettings {
+            host: std::env::var("DESK_TODO_TEST_SSH_HOST").expect("set DESK_TODO_TEST_SSH_HOST"),
+            port: std::env::var("DESK_TODO_TEST_SSH_PORT").unwrap_or_else(|_| "22".into()).parse().unwrap(),
+            ..Default::default()
+        };
+        let preview = scan_host(&server).unwrap();
+        assert!(preview.fingerprint.starts_with("SHA256:"));
+        println!("{}:{} {} {}", preview.host, preview.port, preview.key_type, preview.fingerprint);
+        *PENDING_HOST.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn scan_accepts_fallback_keys_and_prefers_ed25519() {
+        let rsa = "example.com ssh-rsa RSAKEY";
+        let ecdsa = "example.com ecdsa-sha2-nistp256 ECDSAKEY";
+        let ed25519 = "example.com ssh-ed25519 EDKEY";
+        assert_eq!(scanned_key(rsa, "example.com", 22).as_deref(), Some(rsa));
+        assert_eq!(scanned_key(&format!("{rsa}\n{ecdsa}"), "example.com", 22).as_deref(), Some(ecdsa));
+        assert_eq!(scanned_key(&format!("# banner\n{rsa}\n{ecdsa}\n{ed25519}\n"), "example.com", 22).as_deref(), Some(ed25519));
+        assert!(supported_host_key("ssh-rsa"));
+        assert!(supported_host_key("ecdsa-sha2-nistp521"));
+        assert!(!supported_host_key("ssh-dss"));
+    }
+
+    #[test]
+    fn scan_requires_requested_endpoint_and_supported_algorithm() {
+        let line = "[example.com]:2222 ssh-ed25519 KEY";
+        assert_eq!(scanned_key(line, "example.com", 2222).as_deref(), Some(line));
+        assert!(scanned_key(line, "example.com", 22).is_none());
+        assert!(scanned_key("other.com ssh-ed25519 KEY", "example.com", 22).is_none());
+        assert!(scanned_key("example.com ssh-dss KEY", "example.com", 22).is_none());
+        assert!(scanned_key("example.com ssh-ed25519 KEY extra", "example.com", 22).is_none());
+        assert_eq!(scanned_key("[2001:db8::1]:22 ssh-ed25519 KEY", "2001:db8::1", 22).as_deref(), Some("2001:db8::1 ssh-ed25519 KEY"));
+    }
+
+    #[test]
+    fn scan_failure_preserves_diagnostic_without_server_banner() {
+        let error = scan_error("# host SSH-2.0-OpenSSH\nConnection refused\n", "example.com", 2222);
+        assert!(error.contains("example.com:2222"));
+        assert!(error.contains("Connection refused"));
+        assert!(!error.contains("SSH-2.0-OpenSSH"));
+        assert!(!scan_error("# banner\n", "example.com", 22).contains("SSH 诊断"));
+    }
+
     #[test]
     fn rejects_option_injection_in_login_account() {
         let mut server = ServerSettings::default();
@@ -166,7 +289,7 @@ mod tests {
     #[test]
     fn host_trust_requires_review_token_and_preserves_existing_keys() {
         let dir = std::env::temp_dir().join(format!("desk-todo-host-test-{}", uuid::Uuid::new_v4()));
-        let preview = HostPreview { host: "example.com".into(), port: 22, fingerprint: "SHA256:test".into(), confirmation_id: "review-token".into() };
+        let preview = HostPreview { host: "example.com".into(), port: 22, key_type: "ssh-ed25519".into(), fingerprint: "SHA256:test".into(), confirmation_id: "review-token".into() };
         let key_line = "example.com ssh-ed25519 TESTKEY".to_string();
         *PENDING_HOST.lock().unwrap() = Some(PendingHost { preview: preview.clone(), key_line: key_line.clone(), scanned_at: Instant::now() });
         assert!(trust_host(&dir, "unreviewed-token").is_err());
