@@ -399,12 +399,15 @@ fn stage_all(repo: &git2::Repository) -> Result<(), String> {
 
 /// 需要排除在版本库之外的运行时文件。
 /// `boot-trace.log` / `frontend.log` 是诊断日志，进版本库只会污染历史。
-const GITIGNORE_PATTERNS: [&str; 5] = [
+const GITIGNORE_PATTERNS: [&str; 8] = [
     "*.tmp",
     "*.log",
     "todos.json.tmp",
     "backups/",
     "todos.corrupted-*.json",
+    ".server-key-id",
+    "server-known-hosts",
+    ".sync-device-id",
 ];
 // 注意：reports/ 不在此列表中 —— 每日总结应当随数据一起同步到其他设备。
 

@@ -27,3 +27,10 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# 本设备的非秘密密钥标识不跨设备同步
+.server-key-id
+
+server-known-hosts
+
+.sync-device-id

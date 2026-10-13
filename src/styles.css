@@ -794,6 +794,7 @@ input::placeholder {
 }
 
 .settings-head {
+  cursor: move;
   display: flex;
   align-items: center;
   height: 38px;
@@ -1066,6 +1067,7 @@ kbd {
 }
 
 .confirm-box {
+  overflow-wrap: anywhere;
   width: 100%;
   padding: 14px;
   border-radius: 12px;
@@ -1074,3 +1076,43 @@ kbd {
   font-size: 12.5px;
   line-height: 1.5;
 }
+
+/* 同步方式对应的设置字段沿用面板布局。 */
+.sync-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* WebView 内部的原生缩放触发区，兼容无边框窗口。 */
+.resize-region {
+  position: absolute;
+  z-index: 30;
+  touch-action: none;
+}
+.resize-n, .resize-s { left: 14px; right: 14px; height: 5px; cursor: ns-resize; }
+.resize-n { top: 0; }
+.resize-s { bottom: 0; }
+.resize-e, .resize-w { top: 14px; bottom: 14px; width: 5px; cursor: ew-resize; }
+.resize-e { right: 0; }
+.resize-w { left: 0; }
+.resize-ne, .resize-nw, .resize-se, .resize-sw { width: 14px; height: 14px; }
+.resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.resize-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.resize-se::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid rgb(var(--fg-dim) / 0.5);
+  border-bottom: 2px solid rgb(var(--fg-dim) / 0.5);
+}
+.widget.collapsed .resize-regions { display: none; }
+
+#confirm-text { white-space: pre-line; overflow-wrap: anywhere; }
+
+#server-pair-code { width:100%; min-height:80px; resize:vertical; user-select:text; font-size:11px; overflow-wrap:anywhere; }

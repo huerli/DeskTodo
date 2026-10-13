@@ -204,8 +204,64 @@ impl Default for SyncSettings {
     }
 }
 
+/// 同步方式；旧版本配置默认继续使用 Git。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncMethod {
+    #[default]
+    Git,
+    Ssh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SshAuthMethod {
+    #[default]
+    Key,
+    Password,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerSettings {
+    pub auth_method: SshAuthMethod,
+    #[serde(skip)]
+    pub known_hosts_path: PathBuf,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub ssh_key_path: String,
+    pub remote_dir: String,
+    pub database_name: String,
+    pub auto_upload: bool,
+    pub interval_minutes: u32,
+    pub last_upload: Option<String>,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            auth_method: SshAuthMethod::Key,
+            known_hosts_path: PathBuf::new(),
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            ssh_key_path: String::new(),
+            remote_dir: "desk-todo".into(),
+            database_name: "desk-todo.sqlite3".into(),
+            auto_upload: false,
+            interval_minutes: 5,
+            last_upload: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
+    #[serde(default)]
+    pub sync_method: SyncMethod,
+    #[serde(default)]
+    pub server: ServerSettings,
     #[serde(default)]
     pub window: WindowSettings,
     #[serde(default)]
@@ -255,6 +311,8 @@ impl Default for DailySummarySettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppData {
+    #[serde(default)]
+    pub server_sync: Option<crate::sync_document::SyncState>,
     #[serde(default = "default_version")]
     pub version: u32,
     #[serde(default)]
@@ -280,6 +338,7 @@ fn default_version() -> u32 {
 impl Default for AppData {
     fn default() -> Self {
         Self {
+            server_sync: None,
             version: DATA_VERSION,
             todos: Vec::new(),
             settings: Settings::default(),

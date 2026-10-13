@@ -90,7 +90,7 @@
 
     <!-- ==================== 设置面板 ==================== -->
     <section class="settings hidden" id="settings">
-      <header class="settings-head">
+      <header class="settings-head" data-tauri-drag-region="deep" title="按住标题栏拖动窗口">
         <strong>设置</strong>
         <div class="spacer"></div>
         <button class="icon-btn" id="btn-settings-close">
@@ -101,7 +101,7 @@
       <nav class="tabs" id="settings-tabs">
         <button class="tab" data-tab="general">通用</button>
         <button class="tab" data-tab="window">窗口</button>
-        <button class="tab active" data-tab="git">Git 同步</button>
+        <button class="tab active" data-tab="git">同步</button>
         <button class="tab" data-tab="data">数据</button>
       </nav>
 
@@ -175,6 +175,14 @@
 
         <!-- ---------- Git ---------- -->
         <div class="pane active" data-pane="git">
+          <div class="row">
+            <span>同步方式</span>
+            <select id="s-sync-method">
+              <option value="git">Git 仓库</option>
+              <option value="ssh">服务器数据库（SSH）</option>
+            </select>
+          </div>
+          <div id="git-options" class="sync-options">
           <p class="note">
             数据保存在本机 <code id="data-path">…</code>。填写远程仓库后，
             本地提交由内置 libgit2 完成，网络操作复用系统 <code>git</code>（可用 SSH key 或凭据管理器）。
@@ -225,6 +233,40 @@
             <button class="primary-btn small" id="btn-git-sync">立即同步</button>
           </div>
           <div class="git-status" id="git-status">尚未检查</div>
+          </div>
+          <div id="server-options" class="sync-options hidden">
+            <p class="note">通过 SSH 与服务器 SQLite 双向同步加密清单。两台电脑通过配对码共享清单与密钥；开启自动同步后，另一台电脑会定时拉取并刷新。</p>
+            <label class="row"><span>服务器地址</span><input type="text" id="s-server-host" placeholder="192.168.1.100 或主机名" /></label>
+            <label class="row"><span>SSH 端口</span><input type="text" inputmode="numeric" id="s-server-port" placeholder="22" /></label>
+            <label class="row"><span>SSH 用户名</span><input type="text" id="s-server-user" placeholder="服务器登录用户名" /></label>
+            <label class="row"><span>登录方式</span><select id="s-server-auth"><option value="key">SSH 密钥</option><option value="password">登录密码</option></select></label>
+            <label class="row hidden" id="server-password-row"><span>登录密码</span><input type="password" id="s-server-password" autocomplete="new-password" placeholder="留空使用系统密钥管理器中已保存的密码" /></label>
+            <label class="row" id="server-key-row"><span>私钥文件路径</span><input type="text" id="s-server-key" placeholder="~/.ssh/id_ed25519（不是登录密码）" /></label>
+            <label class="row"><span>保存目录</span><input type="text" id="s-server-dir" placeholder="desk-todo 或 /srv/desk-todo" /></label>
+            <label class="row"><span>数据库文件</span><input type="text" id="s-server-database" placeholder="desk-todo.sqlite3" /></label>
+            <p class="note">相对目录位于登录用户的家目录，支持 <code>~/</code>。首次使用请点「确认服务器指纹」，与服务器后台指纹核对一致后保存。登录密码保存在系统密钥管理器中；加密 SSH 私钥请先加入 ssh-agent。
+            </p>
+            <p class="note">业务数据使用 AES-256-GCM 在本机加密，密钥由系统密钥管理器自动保存与读取。服务器只收到密文；密钥不可用时停止上传。本机仍使用原有 JSON 存储。</p>
+            <label class="row"><span>自动同步</span><input type="checkbox" id="s-server-auto" class="switch" /></label>
+            <label class="row"><span>间隔（分钟）</span><input type="text" inputmode="numeric" id="s-server-interval" placeholder="5" /></label>
+            <div class="btn-row">
+              <button class="ghost-btn" id="btn-server-host">确认服务器指纹</button>
+              <button class="ghost-btn" id="btn-server-test">测试连接</button>
+              <button class="primary-btn small" id="btn-server-upload">立即同步</button>
+              <button class="ghost-btn" id="btn-server-restore">覆盖恢复服务器数据</button>
+            </div>
+            <div class="btn-row">
+              <button class="ghost-btn" id="btn-server-pair-create">生成配对码</button>
+              <button class="ghost-btn" id="btn-server-pair-join">加入已有清单</button>
+            </div>
+            <div id="server-pair-panel" class="hidden">
+              <p class="note">配对码包含清单解密密钥。只通过可信方式发给自己的另一台电脑，勿公开分享。另一台电脑仍需自行配置 SSH 登录凭据。</p>
+              <textarea id="server-pair-code" readonly spellcheck="false" aria-label="配对码" placeholder="配对码"></textarea>
+              <button class="ghost-btn" id="btn-server-pair-hide">隐藏配对码</button>
+            </div>
+            <p class="note">不同字段自动合并；同一字段由逻辑版本和设备标识决胜。删除与普通编辑冲突时保留删除，可通过撤销删除重新恢复。</p>
+            <div class="git-status" id="server-status">尚未同步</div>
+          </div>
         </div>
 
         <!-- ---------- 数据 ---------- -->
@@ -278,6 +320,18 @@
       </div>
     </section>
 
+
+    <!-- 无边框窗口的原生缩放区域：位于设置面板上方、弹窗下方。 -->
+    <div class="resize-regions" aria-hidden="true">
+      <div class="resize-region resize-n" data-resize-direction="North" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-s" data-resize-direction="South" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-e" data-resize-direction="East" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-w" data-resize-direction="West" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-ne" data-resize-direction="NorthEast" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-nw" data-resize-direction="NorthWest" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-se" data-resize-direction="SouthEast" data-tauri-drag-region="false"></div>
+      <div class="resize-region resize-sw" data-resize-direction="SouthWest" data-tauri-drag-region="false"></div>
+    </div>
 
     <!-- ==================== 轻提示 ==================== -->
     <div class="toast hidden" id="toast"></div>

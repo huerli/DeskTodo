@@ -2,6 +2,11 @@
 
 mod commands;
 mod git_sync;
+mod server_sync;
+mod server_crypto;
+mod server_auth;
+pub mod sync_document;
+mod ssh_transport;
 pub mod model;
 pub mod self_test;
 pub mod store;
@@ -21,6 +26,7 @@ pub struct AppState {
     pub dir: std::path::PathBuf,
     pub data: Mutex<AppData>,
     pub git: git_sync::GitManager,
+    pub server_busy: Mutex<()>,
     /// 最后一次待写入的窗口几何（物理坐标 + 逻辑尺寸）
     pub last_geometry: Mutex<Option<((i32, i32), (f64, f64))>>,
     /// 几何信息自上次落盘以来是否变化过
@@ -45,6 +51,7 @@ impl AppState {
             dir: dir.clone(),
             data: Mutex::new(data),
             git: git_sync::GitManager::new(dir),
+            server_busy: Mutex::new(()),
             last_geometry: Mutex::new(None),
             geo_dirty: std::sync::atomic::AtomicBool::new(false),
             geo_write_count: std::sync::atomic::AtomicU32::new(0),
@@ -121,7 +128,14 @@ pub fn run() {
                 .map_err(|e| format!("无法解析应用数据目录: {e}"))?;
             std::fs::create_dir_all(&dir)?;
             let data = store::load(&dir);
-            let auto_commit = data.settings.sync.auto_commit;
+            if data.settings.sync_method == model::SyncMethod::Ssh
+                && !data.settings.server.host.trim().is_empty()
+            {
+                // 已配置数据库同步时，启动即从系统凭据库准备密钥。
+                if let Err(error) = server_crypto::ServerKey::load(&dir, true) {
+                    eprintln!("[server] {error}");
+                }
+            }
             app.manage(AppState::new(dir, data));
 
             // ---- 托盘 ----
@@ -135,11 +149,9 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || geometry_save_loop(handle));
 
-            // ---- git 自动提交线程（每 60s 检查一次脏标记）----
-            if auto_commit {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || autocommit_loop(handle));
-            }
+            // ---- 自动同步线程（每分钟检查当前同步方式与设置）----
+            let handle = app.handle().clone();
+            std::thread::spawn(move || autocommit_loop(handle));
 
             // ---- 恢复窗口位置/尺寸/收起状态 ----
             let (pos, size, collapsed, start_hidden) = {
@@ -153,6 +165,7 @@ pub fn run() {
                 )
             };
             if let Some(win) = app.get_webview_window("main") {
+                win.set_resizable(!collapsed)?;
                 if let Some((w, h)) = size {
                     let _ = win.set_size(tauri::LogicalSize::new(w, h));
                 }
@@ -258,6 +271,16 @@ pub fn run() {
             git_sync::git_push,
             git_sync::git_sync_now,
             git_sync::git_test_remote,
+            server_sync::server_test_connection,
+            server_sync::server_save_password,
+            server_sync::server_scan_host,
+            server_sync::server_trust_host,
+            server_sync::server_upload,
+            server_sync::server_create_pairing,
+            server_sync::server_preview_pairing,
+            server_sync::server_join_pairing,
+            server_sync::server_read_backup,
+            server_sync::server_restore_backup,
         ])
         .build(tauri::generate_context!())
         .expect("DeskTodo 启动失败");
@@ -524,30 +547,49 @@ fn reminder_loop(app: AppHandle) {
     }
 }
 
-/// 自动提交：数据变更后 60 秒内提交到本地 git 仓库
+/// 按当前方式执行 Git 自动同步或定时 SSH 上传。
 fn autocommit_loop(app: AppHandle) {
+    let mut last_attempt = std::time::Instant::now();
     loop {
         std::thread::sleep(Duration::from_secs(60));
         let Some(state) = app.try_state::<AppState>() else {
             continue;
         };
-        let enabled = {
-            let d = state.data.lock().unwrap();
-            d.settings.sync.auto_commit && !d.settings.sync.remote_url.trim().is_empty()
-        };
+        let settings = state.data.lock().unwrap().settings.clone();
+        if settings.sync_method == model::SyncMethod::Ssh {
+            if settings.server.auto_upload
+                && !settings.server.host.trim().is_empty()
+                && last_attempt.elapsed() >= Duration::from_secs(
+                    u64::from(settings.server.interval_minutes.max(1)) * 60,
+                )
+            {
+                last_attempt = std::time::Instant::now();
+                let outcome = server_sync::upload(&app);
+                if let Err(error) = outcome {
+                    let _ = app.emit("server://error", error);
+                }
+            }
+            continue;
+        }
+        last_attempt = std::time::Instant::now();
+        let enabled = settings.sync.auto_commit && !settings.sync.remote_url.trim().is_empty();
         if !enabled {
             continue;
         }
-        if let Ok(res) = state.git.sync_now("desk-todo: 自动同步", None, None) {
+        if let Ok(res) = state.git.sync_now("desk-todo: 自动同步", Some(settings.sync), None) {
             let _ = app.emit("git://status", res);
         }
     }
 }
 
 /// 供命令层复用：把 AppData 写回磁盘并刷新托盘
-pub fn persist(app: &AppHandle, data: &AppData) -> Result<(), String> {
+pub fn persist(app: &AppHandle, _data: &AppData) -> Result<(), String> {
     let state = app.state::<AppState>();
-    store::save(&state.dir, data)?;
+    {
+        let mut current=state.data.lock().unwrap();
+        sync_document::track(&mut current,&state.dir)?;
+        store::save(&state.dir,&current)?;
+    }
     if let Ok(mut g) = state.git.dirty.lock() {
         *g = true;
     }
@@ -563,3 +605,6 @@ pub fn snapshot(app: &AppHandle) -> AppData {
 }
 
 pub type NoticeMap = HashMap<String, String>;
+
+/// OpenSSH 调用的密码助手入口，不初始化窗口或日志。
+pub fn ssh_askpass_main() -> i32 { server_auth::askpass_main() }

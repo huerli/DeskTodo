@@ -29,7 +29,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let summary_item = MenuItem::with_id(app, "summary", &title, false, None::<&str>)?;
     let show_item = MenuItem::with_id(app, "toggle", "显示 / 隐藏窗口", true, None::<&str>)?;
     let add_item = MenuItem::with_id(app, "add", "新增待办…", true, None::<&str>)?;
-    let sync_item = MenuItem::with_id(app, "sync", "立即同步到 Git", true, None::<&str>)?;
+    let sync_item = MenuItem::with_id(app, "sync", "立即同步", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 DeskTodo", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;

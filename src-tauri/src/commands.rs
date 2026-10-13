@@ -349,14 +349,9 @@ pub fn set_collapsed(app: AppHandle, collapsed: bool) -> Result<AppData, String>
     };
     if let Some(win) = app.get_webview_window("main") {
         let (w, h) = expanded;
-        if collapsed {
-            // 先锁定不可调整大小，避免收起高度被 resize 事件写回记忆
-            let _ = win.set_resizable(false);
-            let _ = win.set_size(tauri::LogicalSize::new(w, crate::model::COLLAPSED_HEIGHT));
-        } else {
-            let _ = win.set_size(tauri::LogicalSize::new(w, h));
-            let _ = win.set_resizable(true);
-        }
+        win.set_resizable(!collapsed).map_err(|e| e.to_string())?;
+        let height = if collapsed { crate::model::COLLAPSED_HEIGHT } else { h };
+        win.set_size(tauri::LogicalSize::new(w, height)).map_err(|e| e.to_string())?;
     }
     persist(&app, &data)?;
     Ok(data)
@@ -515,6 +510,7 @@ pub async fn import_data(app: AppHandle, merge: Option<bool>) -> Result<Option<I
         } else {
             let mut fresh = incoming.clone();
             fresh.settings = d.settings.clone();
+            fresh.server_sync = d.server_sync.clone();
             *d = fresh;
             let total = d.todos.len();
             (d.clone(), total)

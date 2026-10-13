@@ -319,8 +319,15 @@ function visibleTodos() {
 
 /* ---------------------------------------------------------- 渲染 */
 
+let deferredRender = false;
 function render() {
   if (!data) return;
+  const active = document.activeElement;
+  if (active?.matches("input, textarea") && (active.closest("#list") || active.closest("#settings"))) {
+    deferredRender = true;
+    return;
+  }
+  deferredRender = false;
   const todos = data.todos ?? [];
   const pending = todos.filter((t) => !t.done);
   const done = todos.length - pending.length;
@@ -638,6 +645,19 @@ function syncSettingsUI() {
   set("s-start-hidden", s.start_hidden);
   el("s-sort").value = s.sort;
 
+  el("s-sync-method").value = s.sync_method ?? "git";
+  const server = s.server ?? {};
+  el("s-server-host").value = server.host ?? "";
+  el("s-server-port").value = server.port ?? 22;
+  el("s-server-user").value = server.username ?? "";
+  el("s-server-auth").value = server.auth_method ?? "key";
+  updateServerAuthUI();
+  el("s-server-key").value = server.ssh_key_path ?? "";
+  el("s-server-dir").value = server.remote_dir ?? "desk-todo";
+  el("s-server-database").value = server.database_name ?? "desk-todo.sqlite3";
+  set("s-server-auto", server.auto_upload ?? false);
+  el("s-server-interval").value = server.interval_minutes ?? 5;
+  updateSyncMethodUI();
   el("s-git-url").value = s.sync.remote_url ?? "";
   el("s-git-remote").value = s.sync.remote_name ?? "origin";
   el("s-git-branch").value = s.sync.branch ?? "main";
@@ -671,6 +691,8 @@ function collectSettings() {
   s.start_hidden = el("s-start-hidden").checked;
   s.sort = el("s-sort").value;
 
+  s.sync_method = el("s-sync-method").value;
+  s.server = collectServerSettings();
   s.sync.remote_url = el("s-git-url").value.trim();
   s.sync.remote_name = el("s-git-remote").value.trim() || "origin";
   s.sync.branch = el("s-git-branch").value.trim() || "main";
@@ -689,6 +711,137 @@ function collectSettings() {
   s.daily_summary.export_dir = el("s-summary-dir").value.trim();
   s.daily_summary.filename = el("s-summary-file").value.trim() || "{date}.md";
   return s;
+}
+
+function collectServerSettings() {
+  const port = Number(el("s-server-port").value.trim() || "22");
+  const interval = Number(el("s-server-interval").value.trim() || "5");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("SSH 端口必须为 1–65535 的整数");
+  if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("上传间隔必须为 1–1440 分钟的整数");
+  const previous = data.settings.server ?? {};
+  const server = {
+    ...previous,
+    host: el("s-server-host").value.trim(),
+    port,
+    username: el("s-server-user").value.trim(),
+    auth_method: el("s-server-auth").value,
+    ssh_key_path: el("s-server-auth").value === "password" ? "" : el("s-server-key").value.trim(),
+    remote_dir: el("s-server-dir").value.trim(),
+    database_name: el("s-server-database").value.trim() || "desk-todo.sqlite3",
+    auto_upload: el("s-server-auto").checked,
+    interval_minutes: interval,
+  };
+  if (["host", "port", "username", "remote_dir", "database_name"].some((key) => server[key] !== previous[key])) server.last_upload = null;
+  return server;
+}
+
+function updateSyncMethodUI() {
+  const ssh = el("s-sync-method").value === "ssh";
+  el("git-options").classList.toggle("hidden", ssh);
+  el("server-options").classList.toggle("hidden", !ssh);
+  if (ssh) {
+    const last = data.settings.server?.last_upload;
+    setServerStatus(last ? `上次同步：${relTime(last)}` : "尚未同步");
+  }
+}
+
+function hidePairingCode() {
+  el("server-pair-code").value = "";
+  el("server-pair-panel").classList.add("hidden");
+}
+
+function updateServerAuthUI() {
+  const password = el("s-server-auth").value === "password";
+  el("server-password-row").classList.toggle("hidden", !password);
+  el("server-key-row").classList.toggle("hidden", password);
+}
+
+function setServerStatus(message, cls = "") {
+  const node = el("server-status");
+  node.textContent = message;
+  node.className = "git-status" + (cls ? " " + cls : "");
+}
+
+let serverBusy = false;
+async function serverAction(action = "upload") {
+  if (serverBusy) return;
+  serverBusy = true;
+  const buttons = ["btn-server-test", "btn-server-upload", "btn-server-restore", "btn-server-host", "btn-server-pair-create", "btn-server-pair-join"];
+  for (const id of buttons) el(id).disabled = true;
+  try {
+    const settings = collectSettings();
+    const rpcOptions = { retries: 0, timeoutMs: 65000 };
+    if (action === "pair-join") {
+      const code = await askBox("粘贴自己另一台电脑生成的配对码。加入后保留本机任务，开启每分钟自动同步。", "", "DT1.…");
+      el("prompt-input").value = "";
+      if (!code) return;
+      const preview = await invoke("server_preview_pairing", { code });
+      if (!(await confirmBox(`加入服务器 ${preview.host}:${preview.port} 的共享清单 ${preview.groupId}？\n本机任务会参与合并，共享密钥保存在系统凭据库，SSH 登录凭据需在此电脑单独配置。`))) return;
+      data = await invoke("server_join_pairing", { code }, rpcOptions);
+      hidePairingCode();
+      render();
+      setServerStatus("已加入共享清单。请配置此电脑的 SSH 登录凭据，点击立即同步；自动同步已开启（每分钟）", "ok");
+      return;
+    }
+    if (action === "host") {
+      setServerStatus("正在读取服务器主机指纹…");
+      const host = await invoke("server_scan_host", { server: settings.server }, rpcOptions);
+      const confirmed = await confirmBox(
+        `服务器 ${host.host}:${host.port}\nED25519 指纹：\n${host.fingerprint}\n请与服务器后台或可信来源的指纹核对；确认一致后保存。是否信任此服务器？`
+      );
+      if (!confirmed) { setServerStatus("已取消指纹确认，未改变服务器信任配置"); return; }
+      const message = await invoke("server_trust_host", { confirmationId: host.confirmationId });
+      setServerStatus(message, "ok");
+      toast(message);
+      return;
+    }
+    if (settings.server.auth_method === "password") {
+      const passwordField = el("s-server-password");
+      if (passwordField.value) {
+        await invoke("server_save_password", { server: settings.server, password: passwordField.value }, rpcOptions);
+        passwordField.value = "";
+      }
+    }
+    if (action !== "test") {
+      // 保存失败时中止，避免访问旧的服务器地址。
+      data = await invoke("save_settings", { settings });
+    }
+    if (action === "pair-create") {
+      const code = await invoke("server_create_pairing", {}, rpcOptions);
+      el("server-pair-code").value = code;
+      el("server-pair-panel").classList.remove("hidden");
+      el("server-pair-code").focus();
+      el("server-pair-code").select();
+      setServerStatus("配对码已生成。在另一台电脑点击「加入已有清单」，配对后两台电脑均开启自动同步", "ok");
+      return;
+    }
+    if (action === "restore") {
+      setServerStatus("正在读取并解密本设备的服务器备份…");
+      const backup = await invoke("server_read_backup", {}, rpcOptions);
+      const confirmed = await confirmBox(
+        `服务器备份包含 ${backup.todos.length} 项待办、${backup.trash.length} 项最近删除。确认后将覆盖本机的 ${data.todos.length} 项待办，本机设置保留。是否恢复？`
+      );
+      if (!confirmed) { setServerStatus("已取消恢复，本机待办保持原样"); return; }
+      data = await invoke("server_restore_backup", { backup });
+      render();
+      setServerStatus("本设备的服务器备份已解密恢复", "ok");
+      toast("服务器备份已恢复");
+      return;
+    }
+    setServerStatus(action === "test" ? "正在检查连接与 SQLite 环境…" : "正在拉取、合并并加密同步…");
+    const message = action === "test"
+      ? await invoke("server_test_connection", { server: settings.server }, rpcOptions)
+      : await invoke("server_upload", {}, { retries: 0, timeoutMs: 180000 });
+    if (action !== "test") await reload();
+    setServerStatus(message, "ok");
+    toast(message);
+  } catch (error) {
+    setServerStatus(String(error), "err");
+    toast(String(error), true);
+  } finally {
+    serverBusy = false;
+    for (const id of buttons) el(id).disabled = false;
+  }
 }
 
 async function saveSettings(showToast = false) {
@@ -784,6 +937,17 @@ async function reload() {
 /* ---------------------------------------------------------- 拖动 / 排序 */
 
 function installPointerDrag() {
+  document.querySelectorAll("[data-resize-direction]").forEach((region) => {
+    region.addEventListener("mousedown", (event) => {
+      if (event.button !== 0 || data?.settings?.window?.collapsed) return;
+      event.preventDefault();
+      event.stopPropagation();
+      // 原生拖拽只能发起一次；IPC 超时重试会脱离当前鼠标按下手势。
+      rawInvoke("plugin:window|start_resize_dragging", {
+        label: "main", value: region.dataset.resizeDirection,
+      }).catch((error) => toast("无法调整窗口大小：" + String(error), true));
+    });
+  });
   // ---- 标题栏拖动窗口：交给系统原生实现 ----
   // 标题栏带 data-tauri-drag-region="deep"，Tauri 内部的 drag.js 会在 mousedown 时
   // 调用 start_dragging，由窗口服务器直接接管拖动。相比自研的
@@ -960,6 +1124,7 @@ function installEvents() {
   });
 
   const closeSettings = async () => {
+    hidePairingCode();
     $.settings.classList.add("hidden");
     // 若打开前是收起的，关闭后恢复收起
     if (restoreCollapsed) {
@@ -1037,7 +1202,8 @@ function installEvents() {
 
   // 设置项即时保存
   for (const id of ["s-reminder-enabled", "s-lead", "s-sound", "s-voice", "s-on-top", "s-theme", "s-start-hidden", "s-sort", "s-git-auto", "s-git-msg", "s-git-url", "s-git-remote", "s-git-branch", "s-git-name", "s-git-email", "s-git-user", "s-git-token", "s-git-ssh",
-      "s-summary-enabled", "s-summary-notes", "s-summary-dir", "s-summary-file"]) {
+      "s-summary-enabled", "s-summary-notes", "s-summary-dir", "s-summary-file",
+      "s-sync-method", "s-server-host", "s-server-port", "s-server-user", "s-server-auth", "s-server-key", "s-server-dir", "s-server-database", "s-server-auto", "s-server-interval"]) {
     const node = el(id);
     node?.addEventListener("change", () => saveSettingsSoon());
   }
@@ -1067,6 +1233,16 @@ function installEvents() {
       toast(String(e), true);
     }
   });
+
+  el("s-sync-method").addEventListener("change", updateSyncMethodUI);
+  el("s-server-auth").addEventListener("change", updateServerAuthUI);
+  el("btn-server-host").addEventListener("click", () => serverAction("host"));
+  el("btn-server-pair-create").addEventListener("click", () => serverAction("pair-create"));
+  el("btn-server-pair-join").addEventListener("click", () => serverAction("pair-join"));
+  el("btn-server-pair-hide").addEventListener("click", hidePairingCode);
+  el("btn-server-test").addEventListener("click", () => serverAction("test"));
+  el("btn-server-upload").addEventListener("click", () => serverAction("upload"));
+  el("btn-server-restore").addEventListener("click", () => serverAction("restore"));
 
   // Git
   el("btn-git-test").addEventListener("click", async () => {
@@ -1156,6 +1332,7 @@ function installEvents() {
     }
     if (e.key === "Escape") {
       if (!$.settings.classList.contains("hidden")) {
+        hidePairingCode();
         $.settings.classList.add("hidden");
         await saveSettings(false).catch(() => {});
       } else if (!$.confirm.classList.contains("hidden")) {
@@ -1184,6 +1361,7 @@ function formatGitStatus(st) {
 }
 
 async function refreshGitStatus() {
+  if (el("s-sync-method").value === "ssh") return;
   try {
     const st = await invoke("git_status");
     setGitStatus(formatGitStatus(st), st.dirty ? "" : "ok");
@@ -1193,6 +1371,7 @@ async function refreshGitStatus() {
 }
 
 async function doGitSync() {
+  if (el("s-sync-method").value === "ssh") return serverAction();
   await saveSettings(false).catch(() => {});
   setGitStatus("正在同步…", "");
   try {
@@ -1269,6 +1448,13 @@ async function installBackendEvents() {
     }
   });
 
+  await listen("server://uploaded", async (ev) => {
+    await reload();
+    setServerStatus(ev.payload, "ok");
+  });
+  await listen("server://synced", async () => { await reload(); });
+  await listen("server://error", (ev) => setServerStatus(ev.payload, "err"));
+
   await listen("git://status", (ev) => {
     if (ev.payload?.message) setGitStatus(formatGitStatus(ev.payload), ev.payload.dirty ? "" : "ok");
   });
@@ -1313,6 +1499,9 @@ async function boot() {
     resizeTimer = setTimeout(regrowAll, 120);
   });
   installEvents();
+  document.addEventListener("focusout", () => {
+    if (deferredRender) setTimeout(() => render(), 0);
+  });
   await installBackendEvents();
 
   // 通知权限（首次询问）
