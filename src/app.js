@@ -772,7 +772,7 @@ async function serverAction(action = "upload") {
     const settings = collectSettings();
     const rpcOptions = { retries: 0, timeoutMs: 65000 };
     if (action === "pair-join") {
-      const code = await askBox("粘贴自己另一台电脑生成的配对码。加入后保留本机任务，开启每分钟自动同步。", "", "DT1.…");
+      const code = await askBox("粘贴已加入该清单的任意设备生成的配对码。加入后保留本机任务，开启每分钟自动同步。", "", "DT1.…");
       el("prompt-input").value = "";
       if (!code) return;
       const preview = await invoke("server_preview_pairing", { code });
@@ -812,7 +812,7 @@ async function serverAction(action = "upload") {
       el("server-pair-panel").classList.remove("hidden");
       el("server-pair-code").focus();
       el("server-pair-code").select();
-      setServerStatus("配对码已生成。在另一台电脑点击「加入已有清单」，配对后两台电脑均开启自动同步", "ok");
+      setServerStatus("配对码已生成。在另一台电脑点击「加入已有清单」，配对后所有设备均开启自动同步", "ok");
       return;
     }
     if (action === "restore") {

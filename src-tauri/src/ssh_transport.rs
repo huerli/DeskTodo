@@ -342,4 +342,46 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn eight_devices_join_collide_and_converge() {
+        use crate::sync_document::{Document,decode};
+        let root=std::env::temp_dir().join(format!("desk-todo-many-devices-{}",uuid::Uuid::new_v4()));
+        let config=settings(root.to_string_lossy().into_owned());
+        let key=crate::server_crypto::ServerKey::for_test();
+        let call=|mode:&str,input:&[u8]| {let mut command=Command::new("sh");command.arg("-c").arg(database_command(&config,mode,Some(key.id)).unwrap());execute(command,input).unwrap()};
+        let fetch=|| {let bytes=call("fetch",&[]);(u64::from_le_bytes(bytes[..8].try_into().unwrap()),if bytes.len()>8 {decode(&key.decrypt(&bytes[8..]).unwrap()).unwrap()} else {Document {schema:1,..Default::default()}})};
+        let cas=|revision:u64,document:&Document| {let mut bytes=revision.to_le_bytes().to_vec();bytes.extend(key.encrypt(&serde_json::to_vec(document).unwrap()).unwrap());call("cas",&bytes)==[1]};
+        let mut seed=AppData::default();
+        seed.todos.push(serde_json::from_str(r#"{"id":"shared","title":"base","notes":"old","order":0}"#).unwrap());
+        let (_,empty)=fetch();let base=Document::bootstrap(&seed,&empty,"seed").unwrap();assert!(cas(0,&base));
+        let (stale_revision,remote)=fetch();
+        let mut peers=Vec::new();
+        for n in 0..8 {
+            let device=format!("device-{n}");
+            let mut data=AppData::default();let mut document=Document::bootstrap(&data,&remote,&device).unwrap();document.apply(&mut data).unwrap();
+            assert_eq!(data.todos.len(),1);
+            data.todos.push(serde_json::from_value(serde_json::json!({"id":format!("task-{n}"),"title":format!("from {n}"),"order":n+1})).unwrap());
+            data.todos[0].title=format!("shared edit {n}");
+            if n==0 {data.todos.remove(0);}
+            document.observe(&data,&device).unwrap();peers.push(document);
+        }
+        for (n,document) in peers.iter_mut().enumerate() {
+            let written=cas(stale_revision,document);
+            assert_eq!(written,n==0); // All eight writers started from the same revision.
+            if !written {let (revision,latest)=fetch();document.merge(&latest).unwrap();assert!(cas(revision,document));}
+        }
+        let (_,latest)=fetch();
+        for document in &mut peers {
+            document.merge(&latest).unwrap();
+            assert_eq!(serde_json::to_value(&*document).unwrap(),serde_json::to_value(&latest).unwrap());
+            let mut data=AppData::default();document.apply(&mut data).unwrap();
+            assert_eq!(data.todos.len(),8);assert!(!data.todos.iter().any(|todo|todo.id=="shared"));
+            for n in 0..8 {assert!(data.todos.iter().any(|todo|todo.id==format!("task-{n}")));}
+        }
+        // A ninth device joins after convergence, without deleting existing tasks.
+        let mut newcomer=AppData::default();let joined=Document::bootstrap(&newcomer,&latest,"device-8").unwrap();joined.apply(&mut newcomer).unwrap();assert_eq!(newcomer.todos.len(),8);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
 }

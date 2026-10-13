@@ -235,7 +235,7 @@
           <div class="git-status" id="git-status">尚未检查</div>
           </div>
           <div id="server-options" class="sync-options hidden">
-            <p class="note">通过 SSH 与服务器 SQLite 双向同步加密清单。两台电脑通过配对码共享清单与密钥；开启自动同步后，另一台电脑会定时拉取并刷新。</p>
+            <p class="note">通过 SSH 与服务器 SQLite 双向同步加密清单。多台设备通过同一配对码共享清单与密钥；各设备开启自动同步后，会定时拉取并刷新。</p>
             <label class="row"><span>服务器地址</span><input type="text" id="s-server-host" placeholder="192.168.1.100 或主机名" /></label>
             <label class="row"><span>SSH 端口</span><input type="text" inputmode="numeric" id="s-server-port" placeholder="22" /></label>
             <label class="row"><span>SSH 用户名</span><input type="text" id="s-server-user" placeholder="服务器登录用户名" /></label>
@@ -260,7 +260,7 @@
               <button class="ghost-btn" id="btn-server-pair-join">加入已有清单</button>
             </div>
             <div id="server-pair-panel" class="hidden">
-              <p class="note">配对码包含清单解密密钥。只通过可信方式发给自己的另一台电脑，勿公开分享。另一台电脑仍需自行配置 SSH 登录凭据。</p>
+              <p class="note">配对码包含清单解密密钥。可让多台设备加入同一清单。只通过可信方式传递，勿公开分享。每台设备仍需自行配置 SSH 登录凭据。</p>
               <textarea id="server-pair-code" readonly spellcheck="false" aria-label="配对码" placeholder="配对码"></textarea>
               <button class="ghost-btn" id="btn-server-pair-hide">隐藏配对码</button>
             </div>

@@ -22,7 +22,7 @@ pub fn upload(app: &AppHandle) -> Result<String, String> {
     let device=sync_document::device_id(&state.dir)?;
     let mut local=snapshot.server_sync.as_ref().filter(|state|state.group_id==group).map(|state|state.document.clone());
     let mut accepted=None;
-    for _ in 0..5 {
+    for attempt in 0..16 {
         let (revision,ciphertext)=ssh_transport::fetch(&settings,key.id)?;
         let remote=match ciphertext {Some(bytes)=>sync_document::decode(&key.decrypt(&bytes)?)?,None=>Document {schema:1,..Default::default()}};
         let document=match &mut local {
@@ -35,6 +35,12 @@ pub fn upload(app: &AppHandle) -> Result<String, String> {
         let plaintext=zeroize::Zeroizing::new(serde_json::to_vec(&document).map_err(|_|"同步数据序列化失败")?);
         let encrypted=key.encrypt(&plaintext)?;
         if ssh_transport::compare_and_swap(&settings,revision,&encrypted)? {accepted=Some(document);break;}
+        // 多设备竞争时错开重试，避免所有客户端同时重复覆盖同一版本。
+        if attempt < 15 {
+            let jitter=u64::from(uuid::Uuid::new_v4().as_bytes()[0]);
+            let delay=(50u64 << attempt.min(3)) + jitter;
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
     }
     let mut accepted=accepted.ok_or("其他设备正在频繁修改，请稍后重试；本机改动已保留")?;
     {
