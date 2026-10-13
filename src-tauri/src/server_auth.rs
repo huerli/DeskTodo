@@ -6,7 +6,8 @@ use std::io::Write;
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+use crate::process::background_command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
@@ -120,7 +121,7 @@ fn git_keyscan(git: &Path) -> Option<PathBuf> {
 
 fn scan_keys(host: &str, port: u16) -> Result<String, String> {
     let scan = which::which("ssh-keyscan").map_err(|_| "未找到 ssh-keyscan，请安装 OpenSSH 客户端")?;
-    let run = |binary: &Path| Command::new(binary)
+    let run = |binary: &Path| background_command(binary)
         .args(["-T", "5", "-p", &port.to_string(), "-t", "ed25519,ecdsa,rsa", host])
         .output().map_err(|e| format!("读取服务器指纹失败：{e}"));
     let output = run(&scan)?;
@@ -150,7 +151,7 @@ pub fn scan_host(server: &ServerSettings) -> Result<HostPreview, String> {
     let key_line = scan_keys(&host, server.port)?;
     let key_type = key_line.split_whitespace().nth(1).unwrap().to_string();
     let keygen = which::which("ssh-keygen").map_err(|_| "未找到 ssh-keygen，请安装 OpenSSH 客户端")?;
-    let mut child = Command::new(keygen).args(["-l", "-f", "-", "-E", "sha256"])
+    let mut child = background_command(keygen).args(["-l", "-f", "-", "-E", "sha256"])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     writeln!(child.stdin.take().ok_or("无法计算主机指纹")?, "{key_line}").map_err(|e| e.to_string())?;
     let result = child.wait_with_output().map_err(|e| e.to_string())?;

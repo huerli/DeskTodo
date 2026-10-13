@@ -7,6 +7,7 @@ mod server_crypto;
 mod server_auth;
 pub mod sync_document;
 mod ssh_transport;
+mod process;
 pub mod model;
 pub mod self_test;
 pub mod store;

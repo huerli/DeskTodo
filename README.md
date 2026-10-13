@@ -244,6 +244,7 @@ SQLite 结构、清单标识、版本号和时间等元数据可见，待办业�
 导入时不会覆盖不一致的既有公钥。密钥或登录凭据不可用时会停止操作，不降级为明文。
 
 Windows 自带 OpenSSH 的旧版 `ssh-keyscan` 若报 `choose_kex: unsupported KEX method`，应用会自动尝试已安装的 Git for Windows 扫描工具；没有可用工具时，请更新 OpenSSH 或安装 Git for Windows 后重试。扫描结果仍需与服务器后台或可信来源核对后确认。
+Windows 下的 SSH 连接、主机密钥扫描、指纹计算和 Git 同步命令在后台运行，不弹出控制台窗口。
 
 ---
 
