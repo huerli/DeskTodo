@@ -1,0 +1,67 @@
+name: recover-macos-arm64
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/recover-macos-arm64.yml]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to complete (empty uses the app version)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select the existing release source
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${REQUESTED_TAG:-v$(node -p "require('./src-tauri/tauri.conf.json').version")}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          git checkout --detach "$tag"
+          [[ "v$(node -p "require('./src-tauri/tauri.conf.json').version")" == "$tag" ]] || exit 1
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+        shell: bash
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compile and self-test on the host
+        run: |
+          cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol
+          cargo run --release --manifest-path src-tauri/Cargo.toml --features custom-protocol -- --self-test
+      - name: Build the ARM installer and attach it to the draft
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: DeskTodo ${{ env.RELEASE_TAG }}
+          releaseBody: 常驻桌面的待办小窗。下载对应平台安装包即可使用。
+          releaseDraft: true
+          prerelease: false
+          args: --target aarch64-apple-darwin --bundles app,dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeskTodo-macos-arm64-${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/**/*.dmg
