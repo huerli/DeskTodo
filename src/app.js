@@ -107,6 +107,7 @@ const $ = {
   emptySub: el("empty-sub"),
   inputTitle: el("input-title"),
   inputDue: el("input-due"),
+  inputAssignee: el("input-assignee"),
   prioGroup: el("prio-group"),
   settings: el("settings"),
   toast: el("toast"),
@@ -115,7 +116,7 @@ const $ = {
   filterSeg: el("filter-seg"),
 };
 
-const PRIORITY_LABEL = { high: "高", normal: "", low: "低" };
+const PRIORITY_LABEL = { high: "高", normal: "普通", low: "低" };
 
 /* ---------------------------------------------------------- 工具函数 */
 
@@ -310,8 +311,17 @@ function visibleTodos() {
   } else {
     list.sort((a, b) => a.order - b.order);
   }
-  // 已完成的沉底
-  list.sort((a, b) => Number(a.done) - Number(b.done));
+  // 未完成按优先级分组；同级沿用设置中的排序。已完成按完成时间倒序。
+  const priorityWeight = { high: 0, normal: 1, low: 2 };
+  const completionTime = (todo) => {
+    const time = Date.parse(todo.completed_at ?? "");
+    return Number.isFinite(time) ? time : 0;
+  };
+  list.sort((a, b) => {
+    if (a.done !== b.done) return Number(a.done) - Number(b.done);
+    if (a.done) return completionTime(b) - completionTime(a);
+    return (priorityWeight[a.priority] ?? 1) - (priorityWeight[b.priority] ?? 1);
+  });
   if (filter === "active") return list.filter((t) => !t.done);
   if (filter === "done") return list.filter((t) => t.done);
   return list;
@@ -405,11 +415,19 @@ function renderItem(t) {
   // 勾选
   const check = document.createElement("button");
   check.className = "check";
+  check.setAttribute("role", "checkbox");
+  check.setAttribute("aria-checked", String(t.done));
   check.title = t.done ? "标记为未完成" : "标记为完成";
   check.innerHTML = '<svg viewBox="0 0 24 24" class="ico"><path d="M5 13l4 4L19 7"/></svg>';
   check.addEventListener("click", async (e) => {
     e.stopPropagation();
-    await run(() => invoke("toggle_todo", { id: t.id, done: !t.done }));
+    if (check.disabled) return;
+    check.disabled = true;
+    try {
+      await run(() => invoke("toggle_todo", { id: t.id, done: !t.done }));
+    } finally {
+      check.disabled = false;
+    }
   });
   li.appendChild(check);
 
@@ -453,6 +471,14 @@ function renderItem(t) {
   if (PRIORITY_LABEL[t.priority]) {
     metaBits.push(`<span class="badge ${t.priority}">${PRIORITY_LABEL[t.priority]}优先</span>`);
   }
+  const assignee = document.createElement("button");
+  assignee.className = "badge assignee-badge" + (t.assignee ? "" : " unassigned");
+  assignee.textContent = t.assignee || "未分配";
+  assignee.title = "点击设置执行人";
+  assignee.addEventListener("click", async () => {
+    const value = await askBox("执行人（留空表示未分配）", t.assignee ?? "", "请输入执行人");
+    if (value !== null) await run(() => invoke("update_todo", { payload: { id: t.id, assignee: value.trim() } }));
+  });
   if (t.due_at) {
     const cls = t.priority === "high" ? "badge" : "badge";
     metaBits.push(`<span class="due ${cls}">⏰ ${relTime(t.due_at)}</span>`);
@@ -462,6 +488,20 @@ function renderItem(t) {
     const meta = document.createElement("div");
     meta.className = "item-meta";
     meta.innerHTML = metaBits.join("");
+    meta.prepend(assignee);
+    const priorityBadge = meta.querySelector(".badge.high, .badge.normal, .badge.low");
+    if (priorityBadge) {
+      const select = document.createElement("select");
+      select.className = `badge priority-select ${t.priority}`;
+      select.setAttribute("aria-label", "优先级");
+      for (const [value, label] of Object.entries(PRIORITY_LABEL)) {
+        const option = new Option(label === "普通" ? "普通" : `${label}优先`, value);
+        select.add(option);
+      }
+      select.value = t.priority;
+      select.addEventListener("change", () => run(() => invoke("update_todo", { payload: { id: t.id, priority: select.value } })));
+      priorityBadge.replaceWith(select);
+    }
     main.appendChild(meta);
   }
 
@@ -881,6 +921,14 @@ function syncTimeField() {
  */
 function applyCollapsed(collapsed) {
   $.widget.classList.toggle("collapsed", !!collapsed);
+  // 清理旧版本遗留的 hidden，由 collapsed 类统一控制显隐。
+  $.body.classList.remove("hidden");
+  $.collapsedBar.classList.remove("hidden");
+  const button = el("btn-collapse");
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.setAttribute("aria-controls", "body");
+  button.title = collapsed ? "展开待办列表" : "收起待办列表";
+  if (!collapsed) requestAnimationFrame(regrowAll);
 }
 
 /* ---------------------------------------------------------- 设置面板 Tab */
@@ -1081,10 +1129,25 @@ function installEvents() {
   // （.widget.collapsed .body{display:none} / .collapsed-bar 默认隐藏）。
   // 设置面板是 body 的兄弟节点，因此收起状态下依然可以打开设置。
   el("btn-collapse").addEventListener("click", async () => {
-    const collapsed = !(data?.settings?.window?.collapsed ?? false);
+    const button = el("btn-collapse");
+    if (button.disabled) return;
+    const previous = $.widget.classList.contains("collapsed");
+    const collapsed = !previous;
+    button.disabled = true;
     applyCollapsed(collapsed);
-    await run(() => invoke("set_collapsed", { collapsed }));
-    if (!collapsed) $.inputTitle.focus();
+    try {
+      const next = await run(() => invoke("set_collapsed", { collapsed }));
+      applyCollapsed(next ? next.settings.window.collapsed : previous);
+      if (next && !next.settings.window.collapsed) {
+        render();
+        requestAnimationFrame(() => {
+          regrowAll();
+          $.inputTitle.focus();
+        });
+      }
+    } finally {
+      button.disabled = false;
+    }
   });
 
   el("btn-min").addEventListener("click", () => invoke("hide_window").catch(() => {}));
@@ -1160,10 +1223,11 @@ function installEvents() {
       return;
     }
     const due = fromDatetimeLocal($.inputDue.value);
-    const payload = { title, notes: "", due_at: due, priority: newPriority, tags: [] };
+    const payload = { title, assignee: $.inputAssignee.value.trim(), notes: "", due_at: due, priority: newPriority, tags: [] };
     const ok = await run(() => invoke("add_todo", { payload }));
     if (ok) {
       $.inputTitle.value = "";
+      $.inputAssignee.value = "";
       $.inputDue.value = "";
       syncTimeField();
       $.inputTitle.focus();
@@ -1173,6 +1237,7 @@ function installEvents() {
   $.inputTitle.addEventListener("keydown", (e) => {
     if (e.key === "Enter") add();
   });
+  $.inputAssignee.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
   $.inputDue.addEventListener("keydown", (e) => {
     if (e.key === "Enter") add();
   });
@@ -1431,6 +1496,7 @@ async function installBackendEvents() {
   });
 
   await listen("ui://sync-request", () => doGitSync());
+  await listen("todos://updated", () => reload());
 
   // 每次有待办完成，后端都会刷新当日总结并广播事件
   await listen("summary://updated", (ev) => {
@@ -1455,7 +1521,8 @@ async function installBackendEvents() {
   await listen("server://synced", async () => { await reload(); });
   await listen("server://error", (ev) => setServerStatus(ev.payload, "err"));
 
-  await listen("git://status", (ev) => {
+  await listen("git://status", async (ev) => {
+    await reload();
     if (ev.payload?.message) setGitStatus(formatGitStatus(ev.payload), ev.payload.dirty ? "" : "ok");
   });
 }

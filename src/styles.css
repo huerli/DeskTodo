@@ -1116,3 +1116,58 @@ kbd {
 #confirm-text { white-space: pre-line; overflow-wrap: anywhere; }
 
 #server-pair-code { width:100%; min-height:80px; resize:vertical; user-select:text; font-size:11px; overflow-wrap:anywhere; }
+
+/* 列表元信息使用轻量胶囊，避免原生表单控件抢占标题层级。 */
+.item { padding-top: 8px; padding-bottom: 8px; }
+.item-title { line-height: 1.5; }
+.item-meta { flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.item-meta .badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 18px;
+  color: rgb(var(--fg-dim));
+  background: rgb(var(--line) / .045);
+}
+.item-meta .assignee-badge {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.item-meta .assignee-badge.unassigned { background: transparent; color: rgb(var(--fg-dim) / .8); padding-left: 0; }
+.item-meta .assignee-badge:hover { background: rgb(var(--accent) / .09); color: rgb(var(--accent)); }
+.item-meta .priority-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 20px;
+  min-height: 20px;
+  padding: 0 18px 0 7px;
+  font-family: inherit;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='m3 4 2 2 2-2' fill='none' stroke='%23858c9c' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-position: right 5px center;
+  background-repeat: no-repeat;
+}
+.item-meta .priority-select.high { background-color: rgb(var(--high) / .12); color: rgb(var(--high)); }
+.item-meta .priority-select.low { background-color: rgb(var(--low) / .12); color: rgb(var(--low)); }
+.item-meta .priority-select.normal { background-color: rgb(var(--accent) / .07); color: rgb(var(--accent)); }
+.item-meta .due { background: transparent; }
+.item.done .item-meta { opacity: .65; }
+.item-meta button:focus-visible, .item-meta select:focus-visible { outline: 2px solid rgb(var(--accent) / .6); outline-offset: 2px; }
+.add-box { padding: 10px 12px 12px; gap: 8px; background: rgb(var(--bg-soft) / .55); }
+.add-meta { flex-wrap: wrap; overflow: visible; gap: 6px; }
+.add-meta .assignee-input { width: 115px; min-width: 80px; flex: 1; height: 26px; padding: 0 8px; font-size: 11px; }
+.add-meta .time-field { height: 26px; }
+.prio-group { padding: 2px; gap: 2px; border-radius: 7px; background: rgb(var(--line) / .045); }
+.prio-group .chip { border: 0; border-radius: 5px; padding: 3px 8px; }
+.prio-group .chip.active { background: rgb(var(--bg-elev)); box-shadow: 0 1px 3px rgb(0 0 0 / .1); }
+.check:disabled { opacity: .55; cursor: wait; }

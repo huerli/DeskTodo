@@ -1,6 +1,6 @@
 [package]
 name = "desk-todo"
-version = "0.1.2"
+version = "0.1.3"
 description = "常驻桌面的待办事项小窗"
 authors = ["desk-todo"]
 edition = "2021"
@@ -49,3 +49,12 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# 本地验证：复用增量缓存，省去完整 LTO 和安装包生成。
+[profile.fast]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 16
+incremental = true
+strip = false

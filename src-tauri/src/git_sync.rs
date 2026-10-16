@@ -115,6 +115,17 @@ impl GitManager {
             *b = true;
         }
         let result = self.sync_inner(&settings, message);
+        // 拉取会修改磁盘快照；先更新内存，避免后续 persist 把远端完成状态覆盖掉。
+        if result.as_ref().is_ok_and(|result| result.pulled) {
+            if let Some(app) = app {
+                let state = app.state::<AppState>();
+                let mut current = state.data.lock().unwrap();
+                let incoming = crate::store::load(&self.dir);
+                current.todos = incoming.todos;
+                current.trash = incoming.trash;
+                let _ = app.emit("todos://updated", ());
+            }
+        }
         if let Ok(mut b) = self.busy.lock() {
             *b = false;
         }
@@ -804,6 +815,13 @@ fn sync_variant(app: &AppHandle, op: SyncOp) -> Result<GitResult, String> {
         }
     }
 
+    if result.pulled {
+        let mut current = state.data.lock().unwrap();
+        let incoming = crate::store::load(&state.dir);
+        current.todos = incoming.todos;
+        current.trash = incoming.trash;
+        let _ = app.emit("todos://updated", ());
+    }
     result.ok = true;
     result.status = state.git.status(&settings);
     let _ = app.emit("git://status", result.status.clone());

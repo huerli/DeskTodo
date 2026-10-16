@@ -62,6 +62,7 @@ pub fn run() -> Result<(), String> {
     let now = chrono::Local::now();
     for (i, title) in ["alpha", "beta", "gamma"].iter().enumerate() {
         let mut t = Todo {
+            assignee: String::new(),
             id: uuid::Uuid::new_v4().to_string(),
             title: (*title).to_string(),
             notes: String::new(),
@@ -275,6 +276,7 @@ pub fn run() -> Result<(), String> {
     let peer_git = crate::git_sync::GitManager::new(peer_dir.clone());
     let mut peer_data = store::load(&peer_dir);
     peer_data.todos.push(Todo {
+            assignee: String::new(),
         id: uuid::Uuid::new_v4().to_string(),
         title: "peer-device-item".into(),
         notes: String::new(),
@@ -332,6 +334,7 @@ pub fn run() -> Result<(), String> {
         crate::git_sync::init_repo(&ssh_probe, &settings)?;
         let mut probe_data = AppData::default();
         probe_data.todos.push(Todo {
+            assignee: String::new(),
             id: uuid::Uuid::new_v4().to_string(),
             title: "ssh-probe".into(),
             notes: String::new(),
@@ -396,6 +399,7 @@ pub fn run() -> Result<(), String> {
         crate::git_sync::init_repo(&ab_dir, &ab_settings)?;
         let mut adata = AppData::default();
         adata.todos.push(Todo {
+            assignee: String::new(),
             id: uuid::Uuid::new_v4().to_string(),
             title: "align-item".into(),
             notes: String::new(),
@@ -512,6 +516,7 @@ pub fn run() -> Result<(), String> {
         );
         let mut ddata = AppData::default();
         ddata.todos.push(Todo {
+            assignee: String::new(),
             id: uuid::Uuid::new_v4().to_string(),
             title: "diverge-item".into(),
             notes: String::new(),
@@ -582,6 +587,7 @@ pub fn run() -> Result<(), String> {
             .to_string();
 
         let mk = |title: &str, done: bool, at: chrono::DateTime<chrono::Local>, prio: Priority, notes: &str| Todo {
+            assignee: String::new(),
             id: uuid::Uuid::new_v4().to_string(),
             title: title.into(),
             notes: notes.into(),

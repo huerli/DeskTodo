@@ -93,7 +93,7 @@ pub fn save_geometry_if_dirty(app: &AppHandle) {
     let snapshot = {
         let mut d = state.data.lock().unwrap();
         d.settings.window.position = Some((x, y));
-        if h >= model::MIN_EXPANDED_HEIGHT {
+        if !d.settings.window.collapsed && h >= model::MIN_EXPANDED_HEIGHT {
             d.settings.window.size = Some((w, h));
         }
         d.clone()
@@ -165,6 +165,9 @@ pub fn run() {
                 )
             };
             if let Some(win) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                win.set_resizable(true)?;
+                #[cfg(not(target_os = "linux"))]
                 win.set_resizable(!collapsed)?;
                 if let Some((w, h)) = size {
                     let _ = win.set_size(tauri::LogicalSize::new(w, h));
@@ -184,7 +187,7 @@ pub fn run() {
                     }
                 }
                 if collapsed {
-                    let _ = win.set_size(tauri::LogicalSize::new(320.0, model::COLLAPSED_HEIGHT));
+                    let _ = win.set_size(tauri::LogicalSize::new(size.map(|(w, _)| w.max(260.0)).unwrap_or(320.0), model::COLLAPSED_HEIGHT));
                 }
                 let _ = win.set_always_on_top(true);
                 // 开机自启时可选择直接隐藏到托盘

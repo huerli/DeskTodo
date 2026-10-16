@@ -3,7 +3,8 @@
 #
 #   bash scripts/build.sh             # release 构建（当前平台默认 bundle）
 #   bash scripts/build.sh debug       # debug 构建，不打包
-#   bash scripts/build.sh release app # 只出 .app
+#   bash scripts/build.sh fast        # 快速优化构建，不打包
+#   bash scripts/build.sh release app # macOS：只出 .app
 #   bash scripts/build.sh release app,dmg   # macOS
 #   bash scripts/build.sh release nsis,msi  # Windows
 #   bash scripts/build.sh release appimage,deb  # Linux
@@ -17,7 +18,62 @@ cd "$ROOT"
 source scripts/env.sh
 
 MODE="${1:-release}"
-BUNDLES="${2:-}"
+BUNDLES=""
+shift "$(( $# > 0 ? 1 : 0 ))"
+if [ "${1:-}" = "--bundles" ]; then
+  shift
+  if [ -z "${1:-}" ]; then
+    echo "--bundles 后需要目标，例如：bash scripts/build.sh release --bundles deb" >&2
+    exit 1
+  fi
+fi
+if [ "$#" -gt 1 ]; then
+  echo "用法: bash scripts/build.sh [debug|fast|release] [--bundles] [逗号分隔的 bundle 列表]" >&2
+  exit 1
+fi
+BUNDLES="${1:-}"
+case "$MODE" in
+  debug|fast|release) ;;
+  *) echo "构建模式必须为 debug、fast 或 release" >&2; exit 1 ;;
+esac
+if [ "$MODE" != release ] && [ -n "$BUNDLES" ]; then
+  echo "$MODE 模式不打包，请移除 bundle 参数" >&2
+  exit 1
+fi
+
+PLATFORM="$(uname -s)"
+case "$PLATFORM" in
+  Linux) ALLOWED="deb rpm appimage" ;;
+  Darwin) ALLOWED="app dmg" ;;
+  MINGW*|MSYS*|CYGWIN*) ALLOWED="nsis msi" ;;
+  *) ALLOWED="" ;;
+esac
+if [ -n "$BUNDLES" ] && [ -n "$ALLOWED" ]; then
+  IFS=',' read -r -a TARGETS <<< "$BUNDLES"
+  for target in "${TARGETS[@]}"; do
+    case " $ALLOWED " in
+      *" $target "*) ;;
+      *) echo "$PLATFORM 不支持 bundle '$target'，可选目标：$ALLOWED" >&2; exit 1 ;;
+    esac
+  done
+fi
+
+# 提前报告系统依赖，避免 Cargo 输出大量重复的 pkg-config 错误。
+if [ "$PLATFORM" = Linux ]; then
+  MISSING=()
+  for module in 'glib-2.0 >= 2.70' 'gobject-2.0 >= 2.70' gio-2.0 gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0 dbus-1; do
+    if ! pkg-config --exists "$module" 2>/dev/null; then
+      MISSING+=("$module")
+    fi
+  done
+  if [ "${#MISSING[@]}" -gt 0 ]; then
+    echo "缺少 Linux 编译依赖（或版本不足）：${MISSING[*]}" >&2
+    echo "Ubuntu / Debian 请先执行：" >&2
+    echo "  sudo apt-get update" >&2
+    echo "  sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxdo-dev patchelf" >&2
+    exit 1
+  fi
+fi
 
 command -v cargo >/dev/null || {
   echo "未找到 cargo，请先执行： bash scripts/bootstrap-macos.sh"
@@ -35,10 +91,18 @@ elif [ -x "$ROOT/node_modules/.bin/tauri" ]; then
 fi
 
 case "$MODE" in
+  fast)
+    echo "==> fast 构建（增量编译，不打包）"
+    cargo build --manifest-path src-tauri/Cargo.toml --profile fast --features custom-protocol
+    echo "==> 可执行文件: ${CARGO_TARGET_DIR:-src-tauri/target}/fast/desk-todo"
+    exit 0
+    ;;
+
   debug)
     echo "==> debug 构建（不打包）"
     cargo build --manifest-path src-tauri/Cargo.toml
     echo "==> 可执行文件: ${CARGO_TARGET_DIR:-src-tauri/target}/debug/desk-todo"
+    exit 0
     ;;
 
   release)
@@ -56,7 +120,7 @@ case "$MODE" in
     ;;
 
   *)
-    echo "用法: bash scripts/build.sh [debug|release] [bundle 列表]"
+    echo "用法: bash scripts/build.sh [debug|fast|release] [bundle 列表]"
     exit 1
     ;;
 esac

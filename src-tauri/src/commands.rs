@@ -101,6 +101,8 @@ pub struct NewTodo {
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
+    pub assignee: String,
+    #[serde(default)]
     pub due_at: Option<String>,
     #[serde(default)]
     pub priority: Priority,
@@ -124,6 +126,7 @@ pub fn add_todo(app: AppHandle, payload: NewTodo) -> Result<AppData, String> {
             id: uuid::Uuid::new_v4().to_string(),
             title,
             notes: payload.notes,
+            assignee: payload.assignee.trim().to_string(),
             done: false,
             due_at: payload.due_at.filter(|s| !s.trim().is_empty()),
             priority: payload.priority,
@@ -149,6 +152,8 @@ pub struct TodoPatch {
     #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
     pub due_at: Option<Option<String>>,
     #[serde(default)]
     pub priority: Option<Priority>,
@@ -170,6 +175,9 @@ pub fn update_todo(app: AppHandle, payload: TodoPatch) -> Result<AppData, String
                 return Err("待办内容不能为空".into());
             }
             t.title = title;
+        }
+        if let Some(assignee) = payload.assignee {
+            t.assignee = assignee.trim().to_string();
         }
         if let Some(notes) = payload.notes {
             t.notes = notes;
@@ -341,17 +349,32 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<AppData, Stri
 #[tauri::command]
 pub fn set_collapsed(app: AppHandle, collapsed: bool) -> Result<AppData, String> {
     let state = app.state::<AppState>();
+    let win = app.get_webview_window("main");
     let (data, expanded) = {
         let mut d = state.data.lock().unwrap();
+        // 收起前直接读取当前尺寸，避免 30 秒落盘周期恢复成旧的小窗口。
+        if collapsed && !d.settings.window.collapsed {
+            if let Some(win) = &win {
+                if let (Ok(size), Ok(scale)) = (win.inner_size(), win.scale_factor()) {
+                    let size = size.to_logical::<f64>(scale);
+                    if size.height >= crate::model::MIN_EXPANDED_HEIGHT {
+                        d.settings.window.size = Some((size.width, size.height));
+                    }
+                }
+            }
+        }
         d.settings.window.collapsed = collapsed;
         let (w, h) = d.settings.window.size.unwrap_or((320.0, 520.0));
         (d.clone(), (w.max(260.0), h.max(crate::model::MIN_EXPANDED_HEIGHT)))
     };
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = win {
         let (w, h) = expanded;
-        win.set_resizable(!collapsed).map_err(|e| e.to_string())?;
+        // GTK 禁用 resize 后可能保留旧的尺寸约束，导致内容收起但窗口不变小。
+        win.set_resizable(true).map_err(|e| e.to_string())?;
         let height = if collapsed { crate::model::COLLAPSED_HEIGHT } else { h };
         win.set_size(tauri::LogicalSize::new(w, height)).map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "linux"))]
+        win.set_resizable(!collapsed).map_err(|e| e.to_string())?;
     }
     persist(&app, &data)?;
     Ok(data)

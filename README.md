@@ -24,7 +24,7 @@
 | 类别 | 能力 |
 | --- | --- |
 | 待办管理 | 新增 / 行内改名 / 勾选完成 / 删除 / 撤销删除（⌘Z、Ctrl+Z）/ 清除已完成 |
-| 排序 | 手动拖拽排序，或按到期时间 / 优先级 / 创建时间自动排序；已完成项自动沉底 |
+| 排序 | 未完成按优先级从高到低排列，同优先级按设置排序；已完成项沉底，按完成时间从近到远排列 |
 | 到期提醒 | 到期（或提前 1 分钟 ~ 1 天）弹系统通知；可选提示音与语音播报；可设提前量 |
 | 桌面常驻 | 窗口始终置顶、无边框、可拖动、可收缩成一条细栏；关闭按钮 = 隐藏到托盘（不退出） |
 | 托盘 | 左键点图标显示 / 隐藏；菜单显示待办摘要、快速新增、立即同步、退出 |
@@ -35,6 +35,32 @@
 | 界面 | 深色 / 浅色 / 跟随系统；不透明度可调；⌘N 聚焦输入框 |
 
 ---
+
+## 安装与运行（三平台）
+
+下载对应系统的安装包，安装后直接打开，无需安装 Node.js 或 Rust。
+
+| 平台 | 安装与运行 |
+| --- | --- |
+| Windows | 下载 `-setup.exe` 或 `.msi`，安装后从开始菜单打开 DeskTodo |
+| macOS | 下载并打开 `.dmg`，将 DeskTodo 拖入“应用程序”，双击运行 |
+| Linux | Ubuntu / Debian 安装 `.deb`，或给 `.AppImage` 添加执行权限后直接运行 |
+
+Linux 命令示例（把文件名替换为实际下载的文件名）：
+
+```bash
+sudo apt install ./DeskTodo版本号.deb
+# 或运行 AppImage
+chmod +x DeskTodo版本号.AppImage
+./DeskTodo版本号.AppImage
+```
+
+启动后显示桌面待办小窗：输入任务并回车添加，可填写执行人、选择优先级；
+点击列表中的执行人或优先级可修改，勾选左侧圆圈标记完成。
+在设置中配置 Git 或 SSH 服务器同步后，可在多台电脑间同步任务。
+隐藏窗口后可通过托盘图标重新打开，退出程序请使用托盘菜单。
+
+以下为从源码构建和开发的说明。
 
 ## 一、快速开始
 
@@ -58,7 +84,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```bash
 source scripts/env.sh          # 注入 cargo / node 环境
-bash scripts/build.sh release app   # release 构建，出 .app
+bash scripts/build.sh release       # release 构建，按当前平台打包
 bash scripts/run.sh            # 直接启动（免安装）
 ```
 
@@ -68,7 +94,17 @@ bash scripts/run.sh            # 直接启动（免安装）
 bash scripts/make-dmg.sh       # 生成 dist/DeskTodo_<版本>_<架构>.dmg
 ```
 
-首次构建需要编译 Tauri 依赖，约 3–8 分钟；之后增量构建在 10 秒级。
+首次构建需要编译 Tauri 依赖，耗时取决于机器和缓存。日常修改推荐使用快速构建：
+
+```bash
+bash scripts/build.sh fast
+bash scripts/run.sh fast
+```
+
+`fast` 关闭 LTO、启用增量编译，只生成可执行文件，不制作安装包。
+首次切换模式需要建立独立缓存，后续持续使用同一模式可复用缓存；不要频繁运行 `cargo clean`。
+正式分发时仍使用 `bash scripts/build.sh release deb`（Linux），其他平台选择对应安装包目标。
+`fast` 的体积和运行性能未按发布标准优化，适合本地验证。
 
 > 注意：前端资源是**编译期内嵌**的。改了 `src/` 下的文件必须重新 `build`，只重启进程无效。
 
@@ -128,6 +164,21 @@ xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
 | macOS | `.app` / `.dmg` | Xcode Command Line Tools |
 | Windows | `-setup.exe`（NSIS）/ `.msi` | WebView2 运行时（Win10+ 通常已内置）、MSVC 生成工具 |
 | Linux | `.AppImage` / `.deb` | `libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`patchelf`、`libssl-dev` |
+
+### Linux 本地构建（Ubuntu / Debian）
+
+先安装编译依赖（需要 sudo 密码）：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxdo-dev patchelf
+bash scripts/build.sh release deb
+# 也支持：bash scripts/build.sh release --bundles deb
+# AppImage：bash scripts/build.sh release appimage
+```
+
+`app` 和 `dmg` 是 macOS 目标，Linux 请使用 `deb`、`rpm` 或 `appimage`。
+脚本会在编译前检查平台目标和 Linux 系统依赖。
 
 ### 三平台一次出包（CI）
 

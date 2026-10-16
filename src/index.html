@@ -32,7 +32,7 @@
     </header>
 
     <!-- ==================== 收起状态摘要条 ==================== -->
-    <div class="collapsed-bar hidden" id="collapsed-bar">
+    <div class="collapsed-bar" id="collapsed-bar">
       <span class="dot" id="collapse-dot"></span>
       <span id="collapse-text">暂无待办</span>
       <span class="spacer"></span>
@@ -79,6 +79,7 @@
           <button class="icon-btn clear-time hidden" id="btn-clear-time" title="清除到期时间">
             <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
+          <input type="text" id="input-assignee" class="assignee-input" placeholder="执行人（可选）" aria-label="执行人" autocomplete="off" />
           <div class="prio-group" id="prio-group">
             <button class="chip" data-prio="low">低</button>
             <button class="chip active" data-prio="normal">普通</button>
@@ -137,7 +138,7 @@
             <input type="checkbox" id="s-autostart" class="switch" />
           </label>
           <div class="row">
-            <span>排序方式</span>
+            <span>同优先级排序</span>
             <select id="s-sort">
               <option value="manual">手动（可拖拽）</option>
               <option value="due">按到期时间</option>

@@ -70,6 +70,8 @@ pub struct Todo {
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
+    pub assignee: String,
+    #[serde(default)]
     pub done: bool,
     /// RFC3339 本地时间字符串
     #[serde(default)]

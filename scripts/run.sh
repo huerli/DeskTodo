@@ -3,6 +3,7 @@
 #
 #   bash scripts/run.sh                 # 前台运行 release 版，Ctrl+C 结束
 #   bash scripts/run.sh debug           # 运行 debug 版
+#   bash scripts/run.sh fast            # 运行快速构建版
 #   bash scripts/run.sh release --exit-after 8   # 冒烟：8 秒后自动退出
 #
 # 提示：前端资源是编译期内嵌的，改了 src/ 下的文件必须重新 build。

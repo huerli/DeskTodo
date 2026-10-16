@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-const FIELDS: &[&str] = &["title", "notes", "done", "due_at", "priority", "tags", "created_at", "updated_at", "completed_at", "order"];
+const FIELDS: &[&str] = &["title", "notes", "assignee", "done", "due_at", "priority", "tags", "created_at", "updated_at", "completed_at", "order"];
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Stamp { pub counter: u64, pub device: String }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +161,31 @@ mod tests {
         let mut reverse=right.clone();reverse.merge(&left).unwrap();left.merge(&right).unwrap();
         assert_eq!(serde_json::to_string(&left).unwrap(),serde_json::to_string(&reverse).unwrap());
         left.apply(&mut a).unwrap();assert_eq!(a.todos[0].title,"new title");assert_eq!(a.todos[0].notes,"new note");
+    }
+    #[test]
+    fn completion_and_assignee_sync_without_losing_other_edits() {
+        let (mut a, base) = seed();
+        let mut b = a.clone();
+        a.todos[0].done = true;
+        a.todos[0].completed_at = Some("2026-10-17T09:00:00Z".into());
+        a.todos[0].assignee = "张三".into();
+        b.todos[0].notes = "处理中".into();
+        let mut left = base.clone();
+        let mut right = base;
+        left.observe(&a, "A").unwrap();
+        right.observe(&b, "B").unwrap();
+        left.merge(&right).unwrap();
+        left.apply(&mut b).unwrap();
+        assert!(b.todos[0].done);
+        assert!(b.todos[0].completed_at.is_some());
+        assert_eq!(b.todos[0].assignee, "张三");
+        assert_eq!(b.todos[0].notes, "处理中");
+        b.todos[0].done = false;
+        b.todos[0].completed_at = None;
+        left.observe(&b, "B").unwrap();
+        left.apply(&mut a).unwrap();
+        assert!(!a.todos[0].done);
+        assert!(a.todos[0].completed_at.is_none());
     }
     #[test]
     fn deletion_survives_stale_edit_and_trash_pruning() {
