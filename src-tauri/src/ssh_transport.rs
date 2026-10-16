@@ -3,6 +3,7 @@ use crate::model::{ServerSettings, SshAuthMethod};
 #[cfg(test)]
 use crate::model::{AppData,Settings};
 use crate::server_auth;
+use crate::process::background_command;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -46,7 +47,7 @@ fn ssh_command(settings: &ServerSettings) -> Result<Command, String> {
     }
     remote_directory(settings)?;
     let binary = which::which("ssh").map_err(|_| "未找到 ssh，请先安装 OpenSSH 客户端".to_string())?;
-    let mut command = Command::new(binary);
+    let mut command = background_command(binary);
     command.args([
         "-T", "-o", "StrictHostKeyChecking=yes",
         "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10",

@@ -10,7 +10,7 @@ use crate::model::SyncSettings;
 use crate::AppState;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::process::background_command;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -565,7 +565,7 @@ pub fn ssh_command(ssh_key_path: &str) -> String {
 /// 执行系统 git 命令；需要令牌时通过 credential helper 注入，不写入仓库配置
 fn run_git(dir: &Path, settings: &SyncSettings, args: &[&str]) -> Result<String, String> {
     let git = git_binary().ok_or("未找到系统 git 命令")?;
-    let mut cmd = Command::new(git);
+    let mut cmd = background_command(git);
     cmd.current_dir(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")

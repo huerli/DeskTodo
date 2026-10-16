@@ -159,11 +159,11 @@ xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
 账号做签名与公证（在 `tauri.conf.json` 的 `bundle.macOS` 里配置 `signingIdentity`
 与 `notarize`）。
 
-| 平台 | 产物 | 系统依赖 |
-| --- | --- | --- |
-| macOS | `.app` / `.dmg` | Xcode Command Line Tools |
-| Windows | `-setup.exe`（NSIS）/ `.msi` | WebView2 运行时（Win10+ 通常已内置）、MSVC 生成工具 |
-| Linux | `.AppImage` / `.deb` | `libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`patchelf`、`libssl-dev` |
+| 平台    | 产物                             | 系统依赖                                                                                                    |
+| ------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| macOS   | `.app` / `.dmg`              | Xcode Command Line Tools                                                                                    |
+| Windows | `-setup.exe`（NSIS）/ `.msi` | WebView2 运行时（Win10+ 通常已内置）、MSVC 生成工具                                                         |
+| Linux   | `.AppImage` / `.deb`         | `libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`patchelf`、`libssl-dev` |
 
 ### Linux 本地构建（Ubuntu / Debian）
 
@@ -183,11 +183,16 @@ bash scripts/build.sh release deb
 ### 三平台一次出包（CI）
 
 推送 `v*` 标签即可触发 `.github/workflows/build.yml`，在 GitHub Actions 上并行构建
-macOS(arm64/x64)、Linux、Windows 安装包并创建 Draft Release：
+macOS(arm64/x64)、Linux、Windows 安装包并创建 Draft Release；全部平台成功且制品齐全后，
+`.github/workflows/publish-release.yml` 自动发布正式 Release：
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
+
+macOS ARM 安装包使用 Intel macOS runner 交叉编译，避免 ARM runner 容量不足导致排队失败。
+若只需补齐已有标签的 ARM 安装包，可手动运行 `recover-macos-arm64` 工作流并填写标签；
+补构建成功后，会核对原标签另外三个平台的成功结果及全部安装包，再继续发布。
 
 > 交叉编译不可行：Tauri 必须在目标操作系统上打包。要在本机产出 Windows 安装包，
 > 需在 Windows 上运行 `scripts/build.sh`，或使用上面的 CI。
@@ -207,11 +212,11 @@ Gitee Go 的云端编译插件只提供 Linux 基础镜像（CentOS 8 / Ubuntu 2
 没有 macOS 与 Windows 环境。而 Tauri 的 `.dmg` 需要 `hdiutil`/`codesign`、
 `.msi` 需要 WiX，都必须在目标系统上原生执行，无法交叉编译。所以：
 
-| 平台 | 由谁产出 |
-| --- | --- |
-| Linux `.AppImage` / `.deb` | Gitee Go（`.workflow/desk-todo-linux.yml`） |
-| macOS `.dmg` | 本机 `scripts/make-dmg.sh`，或 GitHub Actions |
-| Windows `.exe` / `.msi` | Windows 机器上 `scripts/build.sh`，或 GitHub Actions |
+| 平台                          | 由谁产出                                              |
+| ----------------------------- | ----------------------------------------------------- |
+| Linux`.AppImage` / `.deb` | Gitee Go（`.workflow/desk-todo-linux.yml`）         |
+| macOS`.dmg`                 | 本机`scripts/make-dmg.sh`，或 GitHub Actions        |
+| Windows`.exe` / `.msi`    | Windows 机器上`scripts/build.sh`，或 GitHub Actions |
 
 若确实需要在 Gitee 侧构建 macOS/Windows，只能走 Gitee Go 的「Shell 脚本执行」
 插件 + 自建主机组（`hostGroupID`），即自己提供 Mac / Windows 机器作为构建机；
@@ -291,18 +296,21 @@ SQLite 结构、清单标识、版本号和时间等元数据可见，待办业�
 
 登录方式支持 SSH 密钥或密码。私钥栏填写文件路径；密码操作时保存至系统凭据库，
 密码助手通过 OpenSSH 专用管道提供密码，不写命令行或环境变量。
-首次连接通过 **确认服务器指纹** 核对可信来源的 ED25519 指纹；配对码可传递原设备已确认的主机公钥，
+首次连接通过 **确认服务器指纹** 核对可信来源的 SHA256 指纹，支持 ED25519、ECDSA 和 RSA 主机密钥，优先使用 ED25519；配对码可传递原设备已确认的主机公钥，
 导入时不会覆盖不一致的既有公钥。密钥或登录凭据不可用时会停止操作，不降级为明文。
+
+Windows 自带 OpenSSH 的旧版 `ssh-keyscan` 若报 `choose_kex: unsupported KEX method`，应用会自动尝试已安装的 Git for Windows 扫描工具；没有可用工具时，请更新 OpenSSH 或安装 Git for Windows 后重试。扫描结果仍需与服务器后台或可信来源核对后确认。
+Windows 下的 SSH 连接、主机密钥扫描、指纹计算和 Git 同步命令在后台运行，不弹出控制台窗口。
 
 ---
 
 ## 四、数据与备份
 
-| 位置 | 内容 |
-| --- | --- |
-| `todos.json` | 全部待办与设置（原子写入：先写临时文件再 rename） |
-| `backups/YYYYmmdd-HHMMSS.json` | 每小时自动留档，最多 12 份，可手工回滚 |
-| `todos.corrupted-*.json` | 若数据文件损坏，原文件会被改名留档，并自动尝试从最近备份恢复 |
+| 位置                             | 内容                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| `todos.json`                   | 全部待办与设置（原子写入：先写临时文件再 rename）            |
+| `backups/YYYYmmdd-HHMMSS.json` | 每小时自动留档，最多 12 份，可手工回滚                       |
+| `todos.corrupted-*.json`       | 若数据文件损坏，原文件会被改名留档，并自动尝试从最近备份恢复 |
 
 数据目录（应用内 `⚙ → 数据` 可直接打开）：
 
@@ -341,19 +349,19 @@ SQLite 结构、清单标识、版本号和时间等元数据可见，待办业�
 
 ## 五、快捷键与交互
 
-| 操作 | 方式 |
-| --- | --- |
-| 添加待办 | 输入框回车（可同时选到期时间与优先级） |
-| 改名 | 直接点标题编辑，回车保存，Esc 取消 |
-| 完成 / 取消完成 | 点左侧圆圈 |
-| 拖拽排序 | 悬停条目左侧出现 ⠿，按住拖动（需排序方式为「手动」） |
-| 撤销删除 | ⌘Z / Ctrl+Z |
-| 聚焦输入框 | ⌘N / Ctrl+N |
-| 拖动窗口 | 按住标题栏空白处拖动（由系统原生实现，跟手无延迟） |
-| 收起 / 展开 | 点标题栏左侧箭头（收起后窗口自缩成一条细栏） |
-| 最大化 / 还原 | 双击标题栏 |
-| 隐藏到托盘 | 点标题栏 `–`；关闭窗口按钮同样是隐藏 |
-| 退出应用 | 托盘菜单 → 退出 DeskTodo |
+| 操作            | 方式                                                  |
+| --------------- | ----------------------------------------------------- |
+| 添加待办        | 输入框回车（可同时选到期时间与优先级）                |
+| 改名            | 直接点标题编辑，回车保存，Esc 取消                    |
+| 完成 / 取消完成 | 点左侧圆圈                                            |
+| 拖拽排序        | 悬停条目左侧出现 ⠿，按住拖动（需排序方式为「手动」） |
+| 撤销删除        | ⌘Z / Ctrl+Z                                          |
+| 聚焦输入框      | ⌘N / Ctrl+N                                          |
+| 拖动窗口        | 按住标题栏空白处拖动（由系统原生实现，跟手无延迟）    |
+| 收起 / 展开     | 点标题栏左侧箭头（收起后窗口自缩成一条细栏）          |
+| 最大化 / 还原   | 双击标题栏                                            |
+| 隐藏到托盘      | 点标题栏`–`；关闭窗口按钮同样是隐藏                |
+| 退出应用        | 托盘菜单 → 退出 DeskTodo                             |
 
 ---
 
@@ -419,10 +427,10 @@ bash scripts/run.sh debug --move-storm 150
 
 应用数据目录下会自动写入两个诊断文件，界面出问题时先看它们：
 
-| 文件 | 内容 |
-| --- | --- |
+| 文件               | 内容                                                     |
+| ------------------ | -------------------------------------------------------- |
 | `boot-trace.log` | 前端启动轨迹（每一步耗时），用于定位"界面空白"卡在哪一步 |
-| `frontend.log` | 前端 `console.error`、未捕获异常、未处理的 Promise 拒绝 |
+| `frontend.log`   | 前端`console.error`、未捕获异常、未处理的 Promise 拒绝 |
 
 ### 排查经验（开发时容易踩的坑）
 
@@ -492,6 +500,7 @@ xattr -dr com.apple.quarantine "/Applications/DeskTodo.app"
 `⚙ → 窗口 → 把窗口移回屏幕右上角`，或删除 `todos.json` 里的 `settings.window.position`。
 
 **Git 推送失败？**
+
 - `could not read Username`：HTTPS 仓库需要填用户名 + 访问令牌，或改用 SSH 地址。
 - `Permission denied (publickey)`：先用 `ssh -T git@github.com` 确认本地 SSH key 可用。
 - 提示存在冲突：应用已中止自动变基、本地数据完好。在数据目录手动 `git status` 处理后重试。

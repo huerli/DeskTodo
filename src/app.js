@@ -827,7 +827,7 @@ async function serverAction(action = "upload") {
       setServerStatus("正在读取服务器主机指纹…");
       const host = await invoke("server_scan_host", { server: settings.server }, rpcOptions);
       const confirmed = await confirmBox(
-        `服务器 ${host.host}:${host.port}\nED25519 指纹：\n${host.fingerprint}\n请与服务器后台或可信来源的指纹核对；确认一致后保存。是否信任此服务器？`
+        `服务器 ${host.host}:${host.port}\n主机密钥类型：${host.keyType}\nSHA256 指纹：\n${host.fingerprint}\n请与服务器后台或可信来源的指纹核对；确认一致后保存。是否信任此服务器？`
       );
       if (!confirmed) { setServerStatus("已取消指纹确认，未改变服务器信任配置"); return; }
       const message = await invoke("server_trust_host", { confirmationId: host.confirmationId });
