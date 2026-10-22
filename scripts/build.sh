@@ -17,6 +17,9 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source scripts/env.sh
 
+# 安装包与程序版本必须一致，防止只更新 package.json 后误发旧版本。
+node scripts/check-version.mjs
+
 MODE="${1:-release}"
 BUNDLES=""
 shift "$(( $# > 0 ? 1 : 0 ))"

@@ -52,6 +52,12 @@
         </div>
       </div>
 
+      <div class="assignee-search">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <input type="text" id="search-assignee" list="assignee-options" placeholder="搜索执行人…" aria-label="搜索执行人" autocomplete="off" />
+        <span id="assignee-search-count" class="hidden" role="status" aria-live="polite"></span>
+        <button id="clear-assignee-search" class="icon-btn hidden" title="清除执行人搜索" aria-label="清除执行人搜索">×</button>
+      </div>
       <ul class="list" id="list"></ul>
 
       <div class="empty hidden" id="empty">
@@ -79,14 +85,16 @@
           <button class="icon-btn clear-time hidden" id="btn-clear-time" title="清除到期时间">
             <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
-          <input type="text" id="input-assignee" class="assignee-input" placeholder="执行人（可选）" aria-label="执行人" autocomplete="off" />
+          <input type="text" id="input-assignee" list="assignee-options" class="assignee-input" placeholder="执行人（可选）" aria-label="执行人" autocomplete="off" />
           <div class="prio-group" id="prio-group">
             <button class="chip" data-prio="low">低</button>
             <button class="chip active" data-prio="normal">普通</button>
             <button class="chip" data-prio="high">高</button>
           </div>
         </div>
+        <textarea id="input-notes" class="new-notes" rows="2" placeholder="处理过程（可选）：填写进展、处理情况或结论" aria-label="处理过程"></textarea>
       </div>
+      <datalist id="assignee-options"></datalist>
     </main>
 
     <!-- ==================== 设置面板 ==================== -->

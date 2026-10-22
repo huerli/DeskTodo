@@ -49,6 +49,7 @@ const trace = (step) => {
 
 let data = null;                 // AppData 快照
 let filter = "all";              // all | active | done
+let assigneeQuery = "";
 let newPriority = "normal";      // 新增时的优先级
 let toastTimer = null;
 let confirmResolve = null;
@@ -142,9 +143,11 @@ function closeConfirm(v) {
 }
 
 // WKWebView 不实现 window.prompt，这里用自绘弹窗
-function askBox(text, initial = "", placeholder = "") {
+function askBox(text, initial = "", placeholder = "", list = "") {
   el("prompt-text").textContent = text;
   const input = el("prompt-input");
+  if (list) input.setAttribute("list", list);
+  else input.removeAttribute("list");
   input.value = initial;
   input.placeholder = placeholder;
   el("prompt").classList.remove("hidden");
@@ -294,7 +297,10 @@ function applyTheme() {
 /* ---------------------------------------------------------- 排序 / 过滤 */
 
 function visibleTodos() {
-  const list = [...(data?.todos ?? [])];
+  const query = assigneeQuery.trim().toLocaleLowerCase();
+  const list = (data?.todos ?? []).filter((t) =>
+    !query || (t.assignee ?? "").toLocaleLowerCase().includes(query)
+  );
   const mode = data?.settings?.sort ?? "manual";
   if (mode === "due") {
     list.sort((a, b) => {
@@ -339,6 +345,9 @@ function render() {
   }
   deferredRender = false;
   const todos = data.todos ?? [];
+  const people = [...new Set(todos.map((t) => (t.assignee ?? "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh-CN"));
+  el("assignee-options").replaceChildren(...people.map((name) => new Option(name, name)));
   const pending = todos.filter((t) => !t.done);
   const done = todos.length - pending.length;
   const overdue = pending.filter((t) => dueClass(t) === "overdue").length;
@@ -372,6 +381,10 @@ function render() {
 
   // 列表
   const list = visibleTodos();
+  const searching = !!assigneeQuery.trim();
+  el("clear-assignee-search").classList.toggle("hidden", !assigneeQuery);
+  el("assignee-search-count").classList.toggle("hidden", !searching);
+  el("assignee-search-count").textContent = searching ? `${list.length} 项` : "";
   $.list.innerHTML = "";
   const frag = document.createDocumentFragment();
   for (const t of list) frag.appendChild(renderItem(t));
@@ -381,7 +394,10 @@ function render() {
   $.empty.classList.toggle("hidden", !showEmpty);
   $.list.classList.toggle("hidden", showEmpty);
   if (showEmpty) {
-    if (filter === "done") {
+    if (searching) {
+      $.emptyTitle.textContent = "没有匹配的任务";
+      $.emptySub.textContent = "试试其他执行人姓名，或清除搜索、切换任务状态";
+    } else if (filter === "done") {
       $.emptyTitle.textContent = "还没有已完成的事项";
       $.emptySub.textContent = "勾选左侧圆圈即可完成";
     } else if (todos.length > 0) {
@@ -473,10 +489,10 @@ function renderItem(t) {
   }
   const assignee = document.createElement("button");
   assignee.className = "badge assignee-badge" + (t.assignee ? "" : " unassigned");
-  assignee.textContent = t.assignee || "未分配";
+  assignee.textContent = "执行人：" + (t.assignee || "未分配");
   assignee.title = "点击设置执行人";
   assignee.addEventListener("click", async () => {
-    const value = await askBox("执行人（留空表示未分配）", t.assignee ?? "", "请输入执行人");
+    const value = await askBox("执行人（留空表示未分配）", t.assignee ?? "", "输入或选择已有执行人", "assignee-options");
     if (value !== null) await run(() => invoke("update_todo", { payload: { id: t.id, assignee: value.trim() } }));
   });
   if (t.due_at) {
@@ -484,7 +500,7 @@ function renderItem(t) {
     metaBits.push(`<span class="due ${cls}">⏰ ${relTime(t.due_at)}</span>`);
   }
   for (const tag of t.tags ?? []) metaBits.push(`<span class="badge tag">#${escapeHtml(tag)}</span>`);
-  if (metaBits.length) {
+  {
     const meta = document.createElement("div");
     meta.className = "item-meta";
     meta.innerHTML = metaBits.join("");
@@ -509,6 +525,16 @@ function renderItem(t) {
   const hasNote = !!(t.notes && t.notes.trim());
   const isOpen = openNotes.has(t.id);
   if (isOpen) li.classList.add("note-open");
+  const processToggle = document.createElement("button");
+  processToggle.className = "process-toggle";
+  processToggle.textContent = isOpen ? "处理过程 · 收起" : (hasNote ? "处理过程 · 查看 / 编辑" : "＋ 填写处理过程");
+  processToggle.setAttribute("aria-expanded", String(isOpen));
+  processToggle.addEventListener("click", () => {
+    if (openNotes.has(t.id)) openNotes.delete(t.id);
+    else openNotes.add(t.id);
+    render();
+  });
+  main.appendChild(processToggle);
 
   if (isOpen) {
     // 编辑态：多行文本框，输入自动保存
@@ -518,6 +544,7 @@ function renderItem(t) {
     const ta = document.createElement("textarea");
     ta.value = t.notes ?? "";
     ta.placeholder = "记录处理过程、进展、结论…（自动保存）";
+    ta.setAttribute("aria-label", "处理过程");
     ta.spellcheck = false;
     ta.addEventListener("input", () => autoGrow(ta));
     queueMicrotask(() => autoGrow(ta));
@@ -1206,6 +1233,26 @@ function installEvents() {
     setSettingsTab(tab.dataset.tab);
   });
 
+  // 执行人搜索与完成状态共同筛选，保留输入焦点。
+  const searchAssignee = el("search-assignee");
+  const updateAssigneeSearch = () => {
+    assigneeQuery = searchAssignee.value;
+    render();
+  };
+  searchAssignee.addEventListener("input", updateAssigneeSearch);
+  searchAssignee.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      searchAssignee.value = "";
+      updateAssigneeSearch();
+    }
+  });
+  el("clear-assignee-search").addEventListener("click", () => {
+    searchAssignee.value = "";
+    updateAssigneeSearch();
+    searchAssignee.focus();
+  });
+
   // 过滤
   $.filterSeg.addEventListener("click", (e) => {
     const b = e.target.closest(".seg-btn");
@@ -1223,11 +1270,12 @@ function installEvents() {
       return;
     }
     const due = fromDatetimeLocal($.inputDue.value);
-    const payload = { title, assignee: $.inputAssignee.value.trim(), notes: "", due_at: due, priority: newPriority, tags: [] };
+    const payload = { title, assignee: $.inputAssignee.value.trim(), notes: el("input-notes").value.trim(), due_at: due, priority: newPriority, tags: [] };
     const ok = await run(() => invoke("add_todo", { payload }));
     if (ok) {
       $.inputTitle.value = "";
       $.inputAssignee.value = "";
+      el("input-notes").value = "";
       $.inputDue.value = "";
       syncTimeField();
       $.inputTitle.focus();

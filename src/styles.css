@@ -1171,3 +1171,44 @@ kbd {
 .prio-group .chip { border: 0; border-radius: 5px; padding: 3px 8px; }
 .prio-group .chip.active { background: rgb(var(--bg-elev)); box-shadow: 0 1px 3px rgb(0 0 0 / .1); }
 .check:disabled { opacity: .55; cursor: wait; }
+
+/* 元信息同排展示，所有控件统一使用轻量标签样式。 */
+.item-meta { column-gap: 6px; row-gap: 4px; }
+.item-meta .assignee-badge {
+  box-shadow: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  display: block;
+  color: rgb(var(--fg-dim));
+  background: rgb(var(--line) / .045);
+}
+.item-meta .priority-select { flex-shrink: 0; }
+.item-meta .due { padding-left: 2px; padding-right: 2px; }
+.process-toggle {
+  display: block; margin-top: 5px; padding: 2px 0; border: 0;
+  background: transparent; color: rgb(var(--fg-dim) / .8);
+  font-family: inherit; font-size: 10.5px; line-height: 1.5; cursor: pointer;
+}
+.process-toggle:hover, .process-toggle[aria-expanded="true"] { color: rgb(var(--accent)); }
+.process-toggle:focus-visible {
+  outline: 2px solid rgb(var(--accent) / .6); outline-offset: 2px; border-radius: 3px;
+}
+.new-notes { width: 100%; box-sizing: border-box; margin-top: 7px; resize: vertical; min-height: 44px; font: inherit; font-size: 11px; }
+.note-preview { white-space: pre-wrap; }
+
+.assignee-search {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  margin: 2px 10px 7px; padding: 3px 8px; border-radius: 8px;
+  background: rgb(var(--line) / .04); color: rgb(var(--fg-dim));
+  border: 1px solid rgb(var(--line) / .08);
+}
+.assignee-search:focus-within { border-color: rgb(var(--accent) / .4); }
+.assignee-search > .ico { width: 13px; height: 13px; flex-shrink: 0; }
+.assignee-search #search-assignee {
+  flex: 1; min-width: 0; width: 0; height: 24px; padding: 0;
+  border: 0; background: transparent; box-shadow: none; font-size: 11px;
+}
+#assignee-search-count { font-size: 10px; white-space: nowrap; }
+.assignee-search .icon-btn { width: 22px; height: 22px; font-size: 17px; }
